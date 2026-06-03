@@ -371,6 +371,7 @@ async function getBase64Image(url: string | undefined): Promise<string> {
   }
   try {
     let absoluteUrl = url;
+    // Note: 127.0.0.1:3000 will likely fail on Serverless like Vercel, but for local it's fine.
     if (url.startsWith('/')) {
       absoluteUrl = `http://127.0.0.1:3000${url}`;
     }
@@ -381,7 +382,7 @@ async function getBase64Image(url: string | undefined): Promise<string> {
     return `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`;
   } catch (err: any) {
     console.error(`Error in getBase64Image for ${url}:`, err.message);
-    return url;
+    throw new Error(`Failed to encode image to base64: ${err.message}`);
   }
 }
 

@@ -4,30 +4,76 @@ export async function urlToBase64Client(url: string | undefined): Promise<string
     return url;
   }
   
-  try {
-    let fetchUrl = url;
-    // If it's not a local data or proxy url, use the proxy to bypass CORS
-    if (!url.startsWith('data:') && !url.startsWith('/api/proxy-image')) {
-       fetchUrl = `/api/proxy-image?url=${encodeURIComponent(url)}`;
+  return new Promise<string>(async (resolve, reject) => {
+    try {
+      // 1. Try fetching directly
+      let res: Response;
+      try {
+        res = await fetch(url);
+      } catch (err) {
+        // Direct fetch failed (likely CORS), try proxy
+        res = await fetch(`/api/proxy-image?url=${encodeURIComponent(url)}`);
+      }
+
+      if (!res.ok) {
+        // If the first proxy failed, maybe we are on Vercel and it gave a 413 or 500
+        throw new Error(`Failed to fetch image, status: ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const objUrl = URL.createObjectURL(blob);
+
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(objUrl);
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const MIN_TARGET_SIZE = 1024; // Ensure the shortest edge is 1024px
+        
+        if (width < height) {
+          if (width !== MIN_TARGET_SIZE) {
+            height = Math.round((height * MIN_TARGET_SIZE) / width);
+            width = MIN_TARGET_SIZE;
+          }
+        } else {
+          if (height !== MIN_TARGET_SIZE) {
+            width = Math.round((width * MIN_TARGET_SIZE) / height);
+            height = MIN_TARGET_SIZE;
+          }
+        }
+        
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          // Fill background white in case of transparent png -> jpeg conversion
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        } else {
+          // fallback to reading blob directly if canvas fails
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("Failed to read blob"));
+          reader.readAsDataURL(blob);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objUrl);
+        // Fallback to simple blob if image loading fails
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error("Failed to read blob"));
+        reader.readAsDataURL(blob);
+      };
+      img.src = objUrl;
+    } catch (error) {
+      console.error(`Final error in urlToBase64Client for ${url}:`, error);
+      reject(error);
     }
-    
-    const res = await fetch(fetchUrl);
-    if (!res.ok) throw new Error(`Status ${res.status}`);
-    const contentType = res.headers.get('content-type') || 'image/png';
-    const buffer = await res.arrayBuffer();
-    
-    // Uint8Array to base64 in browser
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
-    }
-    return `data:${contentType};base64,${btoa(binary)}`;
-  } catch (err: any) {
-    console.error(`Error in urlToBase64Client for ${url}:`, err.message);
-    return url;
-  }
+  });
 }
 
 export async function runAuditOnClient(
@@ -48,11 +94,13 @@ export async function runAuditOnClient(
   try {
     console.log(`Starting client-side audit for task ${taskId} (Category: ${category})`);
     
-    // Prepare image payload. Always convert to base64 to avoid URL download failures on the AI provider's side.
-    const base64Ref = await urlToBase64Client(referenceImage);
-    const base64Res = await urlToBase64Client(resultUrl);
+    // 只有在不是 http 开头时（比如 blob: 或 data:），才进行 base64 转换。
+    // 注意：某些厂商的 Vision 模型（如部分 Siliconflow 代理的 Mimo）可能不支持直接传输 base64，或者不支持过大的 base64，
+    // 因此对于标准的 http/https 公网 URL，我们直接将其透传给模型，以免造成 "failed to download url data"（由于无法识别 base64 导致）。
+    const finalRef = referenceImage.startsWith('http') ? referenceImage : await urlToBase64Client(referenceImage);
+    const finalRes = resultUrl.startsWith('http') ? resultUrl : await urlToBase64Client(resultUrl);
 
-    if (!base64Ref || !base64Res) {
+    if (!finalRef || !finalRes) {
       throw new Error('Reference image or generated image is empty or invalid');
     }
 
@@ -341,13 +389,13 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
               {
                 type: 'image_url',
                 image_url: {
-                  url: base64Ref
+                  url: finalRef
                 }
               },
               {
                 type: 'image_url',
                 image_url: {
-                  url: base64Res
+                  url: finalRes
                 }
               }
             ]
@@ -359,11 +407,13 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
 
     if (!response.ok) {
       const errorText = await response.text();
+      const lowerError = errorText.toLowerCase();
       let extraHelp = '';
       if (response.status === 401) {
         extraHelp = ` (秘钥校验失败：请检查您的 API Key "${apiKey.substring(0, 6)}...${apiKey.slice(-4)}" 是否正确且有效。)`;
+      } else if (response.status === 400 && lowerError.includes('failed to download url')) {
+        extraHelp = `\n[网络访问受限] API 模型后端（如 SiliconFlow）无法读取您的图片URL。如果您的图片在 Vercel 部署上，通常是因为国内网络受到拦截无法下载海外的 Vercel Blob图片。同时，该官方 Mimo 节点可能也不支持直接传输 Base64。解决方法：请使用可公开访问的国内网络图片URL，或换用 OpenRouter 节点。`;
       } else if (response.status === 404) {
-        const lowerError = errorText.toLowerCase();
         if (lowerError.includes('image input') || lowerError.includes('support image') || lowerError.includes('no endpoint')) {
           extraHelp = ` (诊断建议：使用了不支持图像输入的文本模型。请使用含 vision 能力的模型。)`;
         }
