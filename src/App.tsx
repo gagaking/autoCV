@@ -590,6 +590,24 @@ export default function App() {
   const [roundCount, setRoundCount] = useState(1);
   const [globalCategory, setGlobalCategory] = useState<'shoes' | 'apparel' | 'accessories' | 'sets'>('shoes');
   const [activeIssueIndex, setActiveIssueIndex] = useState<number | null>(null);
+  const [isBatchAuditing, setIsBatchAuditing] = useState(false);
+
+  const handleBatchAudit = async () => {
+    setIsBatchAuditing(true);
+    const unAuditedTasks = tasksRef.current
+      .map((t, i) => ({ task: t, index: i }))
+      .filter(({ task }) => task.status === 'success' && !['running', 'success'].includes(task.auditStatus as any));
+    
+    for (let i = 0; i < unAuditedTasks.length; i++) {
+        const { task, index } = unAuditedTasks[i];
+        const refImg = task.referenceImage || (task.referenceImages && task.referenceImages[0]);
+        if (refImg && task.resultUrl) {
+           triggerAutoAudit(index, task.id, refImg, task.resultUrl);
+           await new Promise(resolve => setTimeout(resolve, 800)); // Rate limit 
+        }
+    }
+    setIsBatchAuditing(false);
+  };
 
   // Custom Consistency Audit Threshold and One-Strike (一票否决) Rules States
   const [auditPassThreshold, setAuditPassThreshold] = useState(() => {
@@ -1927,12 +1945,12 @@ export default function App() {
                                 <SelectTrigger className="h-8 text-xs bg-black border-none text-[#ccff00] font-bold rounded-lg px-2 w-[80px] hover:bg-black/90 focus:ring-0 focus:ring-offset-0">
                                   {taskCategory === 'shoes' ? '鞋款' : taskCategory === 'apparel' ? '服装' : taskCategory === 'accessories' ? '配饰' : taskCategory === 'sets' ? '套装' : <SelectValue placeholder="审查品类" />}
                                 </SelectTrigger>
-                                <SelectContent className="rounded-xl border border-gray-800 shadow-lg bg-black text-white">
-                                  <SelectItem value="shoes" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">鞋款</SelectItem>
-                                  <SelectItem value="apparel" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">服装</SelectItem>
-                                  <SelectItem value="accessories" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">配饰</SelectItem>
-                                  <SelectItem value="sets" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">套装</SelectItem>
-                                </SelectContent>
+                                  <SelectContent className="min-w-0 w-[80px] rounded-xl border border-gray-800 shadow-lg bg-black text-white">
+                                    <SelectItem value="shoes" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">鞋款</SelectItem>
+                                    <SelectItem value="apparel" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">服装</SelectItem>
+                                    <SelectItem value="accessories" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">配饰</SelectItem>
+                                    <SelectItem value="sets" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">套装</SelectItem>
+                                  </SelectContent>
                               </Select>
 
                               <Button
@@ -3180,6 +3198,17 @@ export default function App() {
                                 <button className="px-3 py-1 bg-gray-50 hover:bg-gray-100 text-gray-700 rounded-full transition-colors font-bold cursor-pointer flex items-center gap-1.5" onClick={() => {
                                     setTagPanelType('rejected');
                                 }}>不通过: {tasks.filter(t => t.reviewStatus === 'rejected').length}</button>
+                                
+                                <div className="px-3 py-1 bg-gray-50 text-gray-700 rounded-full font-bold flex items-center gap-2 relative">
+                                    未审核: {tasks.filter(t => t.status === 'success' && !['running', 'success'].includes(t.auditStatus as any)).length}
+                                </div>
+                                <Button 
+                                    className="h-8 rounded-full px-3 text-xs bg-black text-white hover:bg-black/80 shadow-none border-none cursor-pointer flex items-center gap-1 shrink-0"
+                                    onClick={handleBatchAudit}
+                                    disabled={isBatchAuditing || tasks.filter(t => t.status === 'success' && !['running', 'success'].includes(t.auditStatus as any)).length === 0}
+                                >
+                                    {isBatchAuditing && <Loader2 className="w-3 h-3 animate-spin" />} 一键审核
+                                </Button>
                             </div>
                         </div>
                     )}
