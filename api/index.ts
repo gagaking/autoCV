@@ -371,7 +371,6 @@ async function getBase64Image(url: string | undefined): Promise<string> {
   }
   try {
     let absoluteUrl = url;
-    // Note: 127.0.0.1:3000 will likely fail on Serverless like Vercel, but for local it's fine.
     if (url.startsWith('/')) {
       absoluteUrl = `http://127.0.0.1:3000${url}`;
     }
@@ -382,7 +381,7 @@ async function getBase64Image(url: string | undefined): Promise<string> {
     return `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`;
   } catch (err: any) {
     console.error(`Error in getBase64Image for ${url}:`, err.message);
-    throw new Error(`Failed to encode image to base64: ${err.message}`);
+    return url;
   }
 }
 
@@ -792,7 +791,6 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
       timestamp: Date.now()
     });
     console.log(`Audit successfully completed for ${taskId}`);
-    return parsedResult;
 
   } catch (err: any) {
     console.error(`Audit failed for ${taskId}:`, err.message);
@@ -801,7 +799,6 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
       error: err.message || 'Unknown auditing error',
       timestamp: Date.now()
     });
-    throw err;
   }
 }
 
@@ -862,28 +859,25 @@ app.post('/api/audit-image', async (req, res) => {
       timestamp: Date.now()
     });
 
-    try {
-      const result = await runAuditBackground(
-        taskId, 
-        referenceImage, 
-        resultUrl, 
-        categoryStr, 
-        auditApiKey, 
-        auditBaseUrl, 
-        auditModel,
-        {
-          passThreshold,
-          rejectOnText,
-          rejectOnStructure,
-          rejectOnPattern
-        }
-      );
-      res.json({ status: 'success', result });
-    } catch (err: any) {
+    runAuditBackground(
+      taskId, 
+      referenceImage, 
+      resultUrl, 
+      categoryStr, 
+      auditApiKey, 
+      auditBaseUrl, 
+      auditModel,
+      {
+        passThreshold,
+        rejectOnText,
+        rejectOnStructure,
+        rejectOnPattern
+      }
+    ).catch(err => {
       console.error(`Background audit thread error for ${taskId}:`, err);
-      res.status(500).json({ error: err.message || 'Audit failed' });
-    }
+    });
 
+    res.json({ status: 'running' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

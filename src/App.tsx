@@ -799,17 +799,6 @@ export default function App() {
             return next;
           });
           return;
-        } else if (data.status === 'none') {
-          setTasks(prev => {
-            const next = prev.map((t, idx) => idx === index ? { 
-              ...t, 
-              auditStatus: 'error' as const, 
-              auditError: 'Audit task not found on server (may have been lost during redeploy or cold start)'
-            } : t);
-            tasksRef.current = next;
-            return next;
-          });
-          return;
         }
         
         attempts++;
@@ -849,96 +838,40 @@ export default function App() {
     });
 
     try {
-      // Import dynamically or ensure it's imported at the top
-      const { runAuditOnClient } = await import('@/src/lib/audit');
-
       // Stitch images together with max width 1080 to save tokens and avoid payload limit
       let stitchedReference = await stitchImagesVertically(referenceImages, 1080);
       
-      let finalRefUrl = stitchedReference;
-      if (stitchedReference.startsWith('data:') && accessKey && secretKey) {
-          try {
-              const arr = stitchedReference.split(',');
-              const bstr = atob(arr[1]);
-              const u8arr = new Uint8Array(bstr.length);
-              for (let i = 0; i < bstr.length; i++) {
-                  u8arr[i] = bstr.charCodeAt(i);
-              }
-              const blob = new Blob([u8arr], { type: 'image/jpeg' });
-              const formData = new FormData();
-              formData.append('file', blob, 'stitched_ref.jpg');
-              
-              const upPath = '/v1/openapi/file/upload';
-              const sigHeaders = signLovartRequest('POST', upPath, accessKey, secretKey);
-              
-              const upRes = await fetch('https://lgw.lovart.ai' + upPath, {
-                  method: 'POST',
-                  headers: {
-                      ...sigHeaders,
-                      'User-Agent': 'LovartAgentWrapper/1.0'
-                  },
-                  body: formData as any,
-              });
-              const upData = await upRes.json();
-              if (upData.code === 0 && upData.data?.url) {
-                  finalRefUrl = upData.data.url;
-              }
-          } catch(e) {
-              console.warn('Failed to upload stitched image, falling back to data URL', e);
-          }
-      }
-
-      const auditResult = await runAuditOnClient(
-        taskId,
-        finalRefUrl,
-        resultUrl,
-        targetCategory,
-        auditApiKey,
-        auditBaseUrl,
-        auditModel,
-        {
+      const res = await fetch('/api/audit-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          referenceImage: stitchedReference,
+          resultUrl,
+          category: targetCategory,
+          auditApiKey,
+          auditBaseUrl,
+          auditModel,
           passThreshold: auditPassThreshold,
           rejectOnText,
           rejectOnStructure,
           rejectOnPattern
-        }
-      );
-
-      const autoReviewStatus = auditResult.pass ? 'approved' : 'rejected';
-      let updatedTask: GeneratedTask | null = null;
-      setTasks(prev => {
-        const next = prev.map((t, idx) => {
-          if (idx === index) {
-            updatedTask = { 
-              ...t, 
-              auditStatus: 'success' as const, 
-              auditResult,
-              reviewStatus: autoReviewStatus as any
-            };
-            return updatedTask;
-          }
-          return t;
-        });
-        tasksRef.current = next;
-        return next;
+        })
       });
       
-      if (updatedTask && (updatedTask as GeneratedTask).resultUrl) {
-        const ut = updatedTask as GeneratedTask;
-        if (auditResult.pass) {
-             exportTaskToPsdHelper(ut, auditResult.issues || [], true);
-             const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
-             const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
-             const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
-             const ext = extMatch ? extMatch[1] : 'png';
-             const downloadFilename = `${baseName}.${ext}`;
-             autoDownloadImage(ut.resultUrl, downloadFilename);
-        }
+      if (res.ok) {
+        pollAuditStatus(index, taskId);
+      } else {
+        const errText = await res.text();
+        setTasks(prev => {
+          const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'error' as const, auditError: errText || 'Failed to initiate audit' } : t);
+          tasksRef.current = next;
+          return next;
+        });
       }
     } catch (err: any) {
-      let errText = err.message || 'Failed to initiate audit';
       setTasks(prev => {
-        const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'error' as const, auditError: errText } : t);
+        const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'error' as const, auditError: err.message } : t);
         tasksRef.current = next;
         return next;
       });
@@ -1925,7 +1858,7 @@ export default function App() {
                               <span className="text-xs font-normal text-gray-600">选择审查品类模板 :</span>
                               <Select value={taskCategory} onValueChange={(v: any) => setTaskCategory(v)}>
                                 <SelectTrigger className="h-8 text-xs bg-black border-none text-[#ccff00] font-bold rounded-lg px-2 w-[80px] hover:bg-black/90 focus:ring-0 focus:ring-offset-0">
-                                  {taskCategory === 'shoes' ? '鞋款' : taskCategory === 'apparel' ? '服装' : taskCategory === 'accessories' ? '配饰' : taskCategory === 'sets' ? '套装' : <SelectValue placeholder="审查品类" />}
+                                  <SelectValue placeholder="审查品类" />
                                 </SelectTrigger>
                                 <SelectContent className="rounded-xl border border-gray-800 shadow-lg bg-black text-white">
                                   <SelectItem value="shoes" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">鞋款</SelectItem>
@@ -3574,7 +3507,7 @@ export default function App() {
                     <Label className="text-xs font-bold text-rose-600 flex items-center gap-1">🏷️ 全局自动审计品类模板</Label>
                     <Select value={globalCategory} onValueChange={(v: any) => setGlobalCategory(v)}>
                       <SelectTrigger className="h-10 text-xs bg-black border-none text-[#ccff00] font-bold rounded-full px-4 focus:ring-0 focus:ring-offset-0 hover:bg-black/90 cursor-pointer w-full shadow-sm">
-                        {globalCategory === 'shoes' ? '鞋款模板' : globalCategory === 'apparel' ? '服装模板' : globalCategory === 'accessories' ? '配饰模板' : globalCategory === 'sets' ? '套装模板' : <SelectValue placeholder="选择审查默认品类" />}
+                        <SelectValue placeholder="选择审查默认品类" />
                       </SelectTrigger>
                       <SelectContent className="rounded-2xl border border-gray-800 shadow-lg bg-black text-white">
                         <SelectItem value="shoes" className="text-xs font-semibold rounded-xl cursor-pointer focus:bg-[#ccff00] focus:text-black">鞋款模板</SelectItem>
