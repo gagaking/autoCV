@@ -659,7 +659,7 @@ export default function App() {
   // Folder Mode State
   const [fixedImageFile, setFixedImageFile] = useState<File | null>(null);
   const [fixedImagePreview, setFixedImagePreview] = useState<string | null>(null);
-  const [fixedPrompt, setFixedPrompt] = useState('参考图一 ，鞋子替换为图二的单只鞋子；图一的背景色相替换为图二鞋子的一个相近色的浅色版本；保持图一的鞋子角度、光线角度不变。--neg 产品环境光，硬投影,深色投影；');
+  const [fixedPrompt, setFixedPrompt] = useState('参考图一 ，鞋子替换为图二的单只鞋子；图一的背景色相替换为图二鞋子的一个相近色的浅色版本；保持图一的鞋子角度不变。--neg 环境光，硬投影,多重投影，深色投影；');
   const [folderFiles, setFolderFiles] = useState<File[]>([]);
   
   // Tasks
@@ -775,35 +775,34 @@ export default function App() {
         if (data.status === 'success') {
           const auditResult = data.result;
           const autoReviewStatus = auditResult.pass ? 'approved' : 'rejected';
-          let updatedTask: GeneratedTask | null = null;
+          
+          const currentTask = tasksRef.current[index];
+          if (!currentTask) return;
+          
+          const ut: GeneratedTask = {
+              ...currentTask,
+              auditStatus: 'success' as const,
+              auditResult,
+              reviewStatus: autoReviewStatus as any
+          };
+
           setTasks(prev => {
-            const next = prev.map((t, idx) => {
-              if (idx === index) {
-                updatedTask = { 
-                  ...t, 
-                  auditStatus: 'success' as const, 
-                  auditResult,
-                  reviewStatus: autoReviewStatus as any
-                };
-                return updatedTask;
-              }
-              return t;
-            });
+            const next = [...prev];
+            if (next[index]) {
+                next[index] = { ...next[index], ...ut };
+            }
             tasksRef.current = next;
             return next;
           });
           
-          if (updatedTask && (updatedTask as GeneratedTask).resultUrl) {
-            const ut = updatedTask as GeneratedTask;
-            if (auditResult.pass) {
-                 exportTaskToPsdHelper(ut, auditResult.issues || [], true);
-                 const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
-                 const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
-                 const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
-                 const ext = extMatch ? extMatch[1] : 'png';
-                 const downloadFilename = `${baseName}.${ext}`;
-                 autoDownloadImage(ut.resultUrl, downloadFilename);
-            }
+          if (auditResult.pass && ut.resultUrl) {
+               exportTaskToPsdHelper(ut, auditResult.issues || [], true);
+               const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
+               const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
+               const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
+               const ext = extMatch ? extMatch[1] : 'png';
+               const downloadFilename = `${baseName}.${ext}`;
+               autoDownloadImage(ut.resultUrl, downloadFilename);
           }
           return;
         } else if (data.status === 'error') {
@@ -853,7 +852,7 @@ export default function App() {
   };
 
   // Triggers the auto consistency audit API on the backend
-  const triggerAutoAudit = async (index: number, taskId: string, referenceImage: string | undefined, resultUrl: string, customCategory?: 'shoes' | 'apparel' | 'accessories' | 'sets') => {
+  const triggerAutoAudit = async (index: number, taskId: string, referenceImage: string | undefined, resultUrl: string, customCategory?: 'shoes' | 'apparel' | 'accessories' | 'sets', retryCount: number = 0) => {
     if (!referenceImage || !resultUrl) return;
     
     const targetCategory = customCategory || globalCategory;
@@ -923,37 +922,42 @@ export default function App() {
       );
 
       const autoReviewStatus = auditResult.pass ? 'approved' : 'rejected';
-      let updatedTask: GeneratedTask | null = null;
+      const currentTask = tasksRef.current[index];
+      if (!currentTask) return;
+      
+      const ut: GeneratedTask = {
+          ...currentTask,
+          auditStatus: 'success' as const,
+          auditResult,
+          reviewStatus: autoReviewStatus as any
+      };
+
       setTasks(prev => {
-        const next = prev.map((t, idx) => {
-          if (idx === index) {
-            updatedTask = { 
-              ...t, 
-              auditStatus: 'success' as const, 
-              auditResult,
-              reviewStatus: autoReviewStatus as any
-            };
-            return updatedTask;
-          }
-          return t;
-        });
+        const next = [...prev];
+        if (next[index]) {
+            next[index] = { ...next[index], ...ut };
+        }
         tasksRef.current = next;
         return next;
       });
       
-      if (updatedTask && (updatedTask as GeneratedTask).resultUrl) {
-        const ut = updatedTask as GeneratedTask;
-        if (auditResult.pass) {
-             exportTaskToPsdHelper(ut, auditResult.issues || [], true);
-             const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
-             const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
-             const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
-             const ext = extMatch ? extMatch[1] : 'png';
-             const downloadFilename = `${baseName}.${ext}`;
-             autoDownloadImage(ut.resultUrl, downloadFilename);
-        }
+      if (auditResult.pass && ut.resultUrl) {
+           exportTaskToPsdHelper(ut, auditResult.issues || [], true);
+           const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
+           const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
+           const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
+           const ext = extMatch ? extMatch[1] : 'png';
+           const downloadFilename = `${baseName}.${ext}`;
+           autoDownloadImage(ut.resultUrl, downloadFilename);
       }
     } catch (err: any) {
+      if (retryCount < 3) {
+          console.warn(`Audit failed for task ${taskId}, retrying (${retryCount + 1}/3)...`, err);
+          setTimeout(() => {
+              triggerAutoAudit(index, taskId, referenceImage, resultUrl, customCategory, retryCount + 1);
+          }, 2000);
+          return;
+      }
       let errText = err.message || 'Failed to initiate audit';
       setTasks(prev => {
         const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'error' as const, auditError: errText } : t);
