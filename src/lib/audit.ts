@@ -1,391 +1,36 @@
-import 'dotenv/config';
-import express from 'express';
-import crypto from 'crypto';
-import stream from 'stream';
-import fs from 'fs';
-import path from 'path';
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
-const archiver = require('archiver');
-
-const app = express();
-
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-app.post('/api/download-zip', async (req, res) => {
-  try {
-    let files = req.body.files;
-    if (req.body.payload) {
-        files = JSON.parse(req.body.payload).files;
-    }
-    
-    if (!files || !Array.isArray(files)) {
-      return res.status(400).send('Array of files [{url, filename}] is required');
-    }
-
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename="batch_results.zip"');
-
-    const archive = archiver('zip', {
-      zlib: { level: 0 } // no compression for speed, images are already compressed
-    });
-
-    archive.on('error', (err) => {
-      console.error('Archiver error:', err);
-    });
-
-    archive.pipe(res);
-
-    for (const file of files) {
-      if (!file.url || !file.filename) continue;
-      
-      try {
-        if (file.url.startsWith('data:')) {
-           const base64Data = file.url.split(',')[1];
-           const buffer = Buffer.from(base64Data, 'base64');
-           archive.append(buffer, { name: file.filename });
-        } else {
-           const response = await fetch(file.url);
-           if (response.ok) {
-             const arrayBuffer = await response.arrayBuffer();
-             archive.append(Buffer.from(arrayBuffer), { name: file.filename });
-           } else {
-               console.warn(`Failed to fetch ${file.url} for zip`);
-           }
-        }
-      } catch (err) {
-        console.warn(`Error appending file ${file.filename}:`, err);
-      }
-    }
-
-    await archive.finalize();
-  } catch (error) {
-    console.error('Download ZIP Error:', error);
-    if (!res.headersSent) {
-      res.status(500).send(String(error));
-    }
-  }
-});
-
-function signLovartRequest(method: string, apiPath: string, accessKey: string, secretKey: string) {
-  const ts = Math.floor(Date.now() / 1000).toString();
-  const payload = `${method.toUpperCase()}\n${apiPath}\n${ts}`;
-  const sig = crypto.createHmac('sha256', secretKey).update(payload).digest('hex');
-  return {
-    'X-Access-Key': accessKey,
-    'X-Timestamp': ts,
-    'X-Signature': sig,
-    'X-Signed-Method': method.toUpperCase(),
-    'X-Signed-Path': apiPath,
-  };
-}
-
-app.post('/api/lovart/upload', async (req, res) => {
-  try {
-    const { accessKey, secretKey, base64Image, filename } = req.body;
-    const apiHost = 'https://lgw.lovart.ai';
-    const path = '/v1/openapi/file/upload';
-    
-    const sigHeaders = signLovartRequest('POST', path, accessKey, secretKey);
-    
-    const buffer = Buffer.from(base64Image.split('base64,')[1] || base64Image, 'base64');
-    
-    const formData = new FormData();
-    const blob = new Blob([buffer], { type: 'image/png' });
-    formData.append('file', blob, filename || 'image.png');
-
-    const response = await fetch(apiHost + path, {
-      method: 'POST',
-      headers: {
-        ...sigHeaders,
-        'User-Agent': 'LovartAgentWrapper/1.0'
-      },
-      body: formData as any,
-    });
-
-    const data = await response.json();
-    if (data.code !== 0) throw new Error(`Upload API error (Code: ${data.code}): ${data.message || JSON.stringify(data)}`);
-    
-    res.json({ url: data.data.url });
-  } catch (error: any) {
-    res.status(500).json({ error: String(error) });
-  }
-});
-
-app.post('/api/lovart/project', async (req, res) => {
-  try {
-    const { accessKey, secretKey, projectName } = req.body;
-    const apiHost = 'https://lgw.lovart.ai';
-    const path = '/v1/openapi/project/save';
-    const sigHeaders = signLovartRequest('POST', path, accessKey, secretKey);
-    
-    const response = await fetch(apiHost + path, {
-      method: 'POST',
-      headers: {
-        ...sigHeaders,
-        'Content-Type': 'application/json',
-        'User-Agent': 'LovartAgentWrapper/1.0'
-      },
-      body: JSON.stringify({
-        project_id: "",
-        canvas: "",
-        project_cover_list: [],
-        pic_count: 0,
-        project_type: 3,
-        project_name: projectName || "Batch Images"
-      }),
-    });
-
-    const data = await response.json();
-    if (data.code !== 0) throw new Error(`Project API error (Code: ${data.code}): ${data.message || JSON.stringify(data)}`);
-    res.json({ projectId: data.data.project_id });
-  } catch (error: any) {
-    res.status(500).json({ error: String(error) });
-  }
-});
-
-app.post('/api/lovart/chat', async (req, res) => {
-  try {
-    const { accessKey, secretKey, projectId, prompt, attachments, mode, tool_config } = req.body;
-    const apiHost = 'https://lgw.lovart.ai';
-    const path = '/v1/openapi/chat';
-    const sigHeaders = signLovartRequest('POST', path, accessKey, secretKey);
-    
-    const payload: any = { prompt, project_id: projectId };
-    if (attachments && attachments.length > 0) {
-      payload.attachments = attachments;
-    }
-    if (mode) {
-      payload.mode = mode;
-    }
-    if (tool_config) {
-      payload.tool_config = tool_config;
-    }
-
-    const response = await fetch(apiHost + path, {
-      method: 'POST',
-      headers: {
-        ...sigHeaders,
-        'Content-Type': 'application/json',
-        'User-Agent': 'LovartAgentWrapper/1.0'
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (response.status === 429) {
-       const retryAfter = response.headers.get('Retry-After');
-       if (retryAfter) res.set('Retry-After', retryAfter);
-       return res.status(429).json({ error: 'Too Many Requests' });
-    } else if (response.status === 409) {
-       return res.status(409).json({ error: 'Conflict' });
-    }
-
-    const data = await response.json();
-    if (data.code === 2012) {
-       return res.status(409).json({ error: 'Concurrent task limit reached (Code: 2012)' });
-    }
-    if (data.code !== 0) throw new Error(`Chat API error (Code: ${data.code}): ${data.message || JSON.stringify(data)}`);
-    res.json({ threadId: data.data.thread_id });
-  } catch (error: any) {
-    res.status(500).json({ error: String(error) });
-  }
-});
-
-app.post('/api/lovart/result', async (req, res) => {
-  try {
-    const { accessKey, secretKey, threadId } = req.body;
-    const apiHost = 'https://lgw.lovart.ai';
-    const path = '/v1/openapi/chat/result';
-    const queryStr = `?thread_id=${encodeURIComponent(threadId)}`;
-    const sigHeaders = signLovartRequest('GET', path, accessKey, secretKey);
-    
-    const response = await fetch(apiHost + path + queryStr, {
-      method: 'GET',
-      headers: {
-        ...sigHeaders,
-        'Content-Type': 'application/json',
-        'User-Agent': 'LovartAgentWrapper/1.0'
-      }
-    });
-
-    if (response.status === 429) {
-       return res.status(429).json({ error: 'Too Many Requests' });
-    }
-
-    const data = await response.json();
-    if (data.code !== 0) {
-      throw new Error(`Result API error (Code: ${data.code}): ${data.message || JSON.stringify(data)}`);
-    }
-    res.json({ data: data.data });
-  } catch (error: any) {
-    res.status(500).json({ error: String(error) });
-  }
-});
-
-app.post('/api/lovart/status', async (req, res) => {
-  try {
-    const { accessKey, secretKey, threadId } = req.body;
-    const apiHost = 'https://lgw.lovart.ai';
-    const path = '/v1/openapi/chat/status';
-    const queryStr = `?thread_id=${encodeURIComponent(threadId)}`;
-    const sigHeaders = signLovartRequest('GET', path, accessKey, secretKey);
-    
-    const response = await fetch(apiHost + path + queryStr, {
-      method: 'GET',
-      headers: {
-        ...sigHeaders,
-        'Content-Type': 'application/json',
-        'User-Agent': 'LovartAgentWrapper/1.0'
-      }
-    });
-
-    if (response.status === 429) {
-       return res.status(429).json({ error: 'Too Many Requests' });
-    }
-
-    const data = await response.json();
-    if (data.code !== 0) {
-      throw new Error(`Status API error (Code: ${data.code}): ${data.message || JSON.stringify(data)}`);
-    }
-    res.json({ status: data.data.status });
-  } catch (error: any) {
-    res.status(500).json({ error: String(error) });
-  }
-});
-
-app.post('/api/lovart/set-mode', async (req, res) => {
-  try {
-    const { accessKey, secretKey, unlimited } = req.body;
-    const apiHost = 'https://lgw.lovart.ai';
-    const path = '/v1/openapi/mode/set';
-    const sigHeaders = signLovartRequest('POST', path, accessKey, secretKey);
-    
-    const response = await fetch(apiHost + path, {
-      method: 'POST',
-      headers: {
-        ...sigHeaders,
-        'Content-Type': 'application/json',
-        'User-Agent': 'LovartAgentWrapper/1.0'
-      },
-      body: JSON.stringify({ unlimited }),
-    });
-
-    const data = await response.json();
-    if (data.code !== 0) throw new Error(data.message || 'Set mode failed');
-    res.json({ success: true, data: data.data });
-  } catch (error: any) {
-    res.status(500).json({ error: String(error) });
-  }
-});
-
-app.post('/api/proxy-download', async (req, res) => {
-  try {
-    const { url } = req.body;
-    const response = await fetch(url);
-    if (!response.ok) {
-      return res.status(response.status).json({ error: 'Failed to fetch image' });
-    }
-    
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const contentType = response.headers.get('content-type') || 'application/octet-stream';
-    
-    res.json({ base64: buffer.toString('base64'), contentType });
-  } catch (error) {
-    console.error('Download Proxy Error:', error);
-    res.status(500).json({ error: String(error) });
-  }
-});
-
-app.get('/api/download-file', async (req, res) => {
-  try {
-    const { url, filename } = req.query;
-    if (!url || typeof url !== 'string') {
-      return res.status(400).send('URL is required');
-    }
-    const response = await fetch(url);
-    if (!response.ok) {
-      return res.status(response.status).send('Failed to fetch image');
-    }
-    const contentType = response.headers.get('content-type') || 'application/octet-stream';
-    const safeFilename = typeof filename === 'string' ? filename : 'downloaded_image.png';
-    const encodedFilename = encodeURIComponent(safeFilename)
-      .replace(/'/g, '%27')
-      .replace(/\(/g, '%28')
-      .replace(/\)/g, '%29')
-      .replace(/\*/g, '%2A');
-
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Content-Length', buffer.length.toString());
-    
-    // Provide general ASCII fallback filename for clients/proxies that don't support UTF-8 filename*
-    const asciiFallback = safeFilename.replace(/[^\x20-\x7E]/g, '_');
-    res.setHeader('Content-Disposition', `attachment; filename="${asciiFallback}"; filename*=UTF-8''${encodedFilename}`);
-    
-    res.send(buffer);
-  } catch (error) {
-    console.error('Download File Proxy Error:', error);
-    res.status(500).send(String(error));
-  }
-});
-
-app.get('/api/proxy-image', async (req, res) => {
-  try {
-    const { url } = req.query;
-    if (!url || typeof url !== 'string') {
-      return res.status(400).send('URL is required');
-    }
-    const response = await fetch(url);
-    if (!response.ok) {
-      return res.status(response.status).send('Failed to fetch image');
-    }
-    const contentType = response.headers.get('content-type') || 'application/octet-stream';
-    res.setHeader('Content-Type', contentType);
-    res.setHeader('Cache-Control', 'public, max-age=86400, immutable');
-    const arrayBuffer = await response.arrayBuffer();
-    res.end(Buffer.from(arrayBuffer));
-  } catch (error) {
-    console.error('Image Proxy Error:', error);
-    res.status(500).send(String(error));
-  }
-});
-
-// ==== CONSISTENCY AUDIT FEATURE ====
-
-const TASKS_FILE_PATH = path.join(process.cwd(), 'tasks_store.json');
-const auditStatusStore = new Map<string, {
-  status: 'pending' | 'running' | 'success' | 'error';
-  result?: any;
-  error?: string;
-  timestamp: number;
-}>();
-
-async function getBase64Image(url: string | undefined): Promise<string> {
+export async function urlToBase64Client(url: string | undefined): Promise<string> {
   if (!url) return '';
   if (url.startsWith('data:')) {
     return url;
   }
+  
   try {
-    let absoluteUrl = url;
-    if (url.startsWith('/')) {
-      absoluteUrl = `http://127.0.0.1:3000${url}`;
+    let fetchUrl = url;
+    // If it's not a local data or proxy url, use the proxy to bypass CORS
+    if (!url.startsWith('data:') && !url.startsWith('/api/proxy-image')) {
+       fetchUrl = `/api/proxy-image?url=${encodeURIComponent(url)}`;
     }
-    const res = await fetch(absoluteUrl);
+    
+    const res = await fetch(fetchUrl);
     if (!res.ok) throw new Error(`Status ${res.status}`);
     const contentType = res.headers.get('content-type') || 'image/png';
     const buffer = await res.arrayBuffer();
-    return `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`;
+    
+    // Uint8Array to base64 in browser
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return `data:${contentType};base64,${btoa(binary)}`;
   } catch (err: any) {
-    console.error(`Error in getBase64Image for ${url}:`, err.message);
+    console.error(`Error in urlToBase64Client for ${url}:`, err.message);
     return url;
   }
 }
 
-async function runAuditBackground(
+export async function runAuditOnClient(
   taskId: string, 
   referenceImage: string, 
   resultUrl: string, 
@@ -401,17 +46,17 @@ async function runAuditBackground(
   }
 ) {
   try {
-    console.log(`Starting background audit for task ${taskId} (Category: ${category})`);
+    console.log(`Starting client-side audit for task ${taskId} (Category: ${category})`);
     
-    // Convert both images to base64
-    const base64Ref = await getBase64Image(referenceImage);
-    const base64Res = await getBase64Image(resultUrl);
+    // Prepare image payload (pass HTTP URLs directly, convert local blob/data to base64)
+    const base64Ref = referenceImage.startsWith('http') ? referenceImage : await urlToBase64Client(referenceImage);
+    const base64Res = resultUrl.startsWith('http') ? resultUrl : await urlToBase64Client(resultUrl);
 
     if (!base64Ref || !base64Res) {
       throw new Error('Reference image or generated image is empty or invalid');
     }
 
-    let apiKey = (userApiKey || process.env.OPENROUTER_API_KEY || '').trim();
+    let apiKey = (userApiKey || '').trim();
     if (apiKey.startsWith('"') && apiKey.endsWith('"')) {
       apiKey = apiKey.slice(1, -1).trim();
     }
@@ -422,7 +67,7 @@ async function runAuditBackground(
       apiKey = 'sk-ci037ealwgdgw6cadb3cc4hxzvm2fgfbw2clwc1gvuma1k3k';
     }
 
-    let model = (userModel || process.env.OPENROUTER_MODEL || '').trim();
+    let model = (userModel || '').trim();
     if (model.startsWith('"') && model.endsWith('"')) {
       model = model.slice(1, -1).trim();
     }
@@ -433,7 +78,7 @@ async function runAuditBackground(
       model = 'xiaomi/mimo-v2.5';
     }
 
-    let openRouterUrl = (userBaseUrl || process.env.OPENROUTER_BASE_URL || '').trim();
+    let openRouterUrl = (userBaseUrl || '').trim();
     if (openRouterUrl.startsWith('"') && openRouterUrl.endsWith('"')) {
       openRouterUrl = openRouterUrl.slice(1, -1).trim();
     }
@@ -471,11 +116,9 @@ async function runAuditBackground(
 
     if (isMimoOfficial) {
       if (openRouterUrl.includes('openrouter.ai')) {
-        console.log(`[AutoDetect] Re-routing to official Xiaomi MIMO endpoint for model ${model}`);
         openRouterUrl = 'https://api.xiaomimimo.com/v1/chat/completions';
       }
     } else if (apiKey.startsWith('sk-') && !apiKey.startsWith('sk-or-') && openRouterUrl.includes('openrouter.ai') && !userBaseUrl) {
-      console.log(`[AutoDetect] Re-routing SiliconFlow key to api.siliconflow.cn`);
       openRouterUrl = 'https://api.siliconflow.cn/v1/chat/completions';
       if (model === 'xiaomi/mimo-v2.5' || model === 'xiaomi/mimo-v2.5-pro' || model === 'vendor/xiaomi/mimo-preview') {
         model = 'vendor/xiaomi/mimo-preview';
@@ -607,24 +250,24 @@ ${rejectOnText ? '任何明显拼写错误或乱码、残畸 >= 2 处，直接�
 
     let criticalRejectPrompts = '';
     if (rejectOnStructure) {
-      criticalRejectPrompts += '1. 结构不一致：若产品的物理版型主要外轮廓与标准参考物具有硬性款式大错、结构缺失，则必须判定一票否决（"pass": false）。\n';
+      criticalRejectPrompts += '1. 结构不一致：若产品的物理版型主要外轮廓与标准参考物具有硬性款式大错、结构缺失，则必须判定一票否决（"pass": false）。\\n';
     } else {
-      criticalRejectPrompts += '1. 结构不一致宽大判定：由于透视镜头、创意海报或者不同硬投影引起的 Logo/Swoosh 局部少量错位偏离，在主体款式和鞋服物理框架无变时，切不可大惊小怪，不要进行一票否决直接 Reject 打回，请在瑕疵检测扣分后（只扣1-3分），允许高分 PASS。\n';
+      criticalRejectPrompts += '1. 结构不一致宽大判定：由于透视镜头、创意海报或者不同硬投影引起的 Logo/Swoosh 局部少量错位偏离，在主体款式和鞋服物理框架无变时，切不可大惊小怪，不要进行一票否决直接 Reject 打回，请在瑕疵检测扣分后（只扣1-3分），允许高分 PASS。\\n';
     }
     
     if (rejectOnText) {
-      criticalRejectPrompts += '2. 文字拼写错误、出现明显的乱码和杂乱 AI 字母拼读 >= 2 处，则判定一票否决（"pass": false）。\n';
+      criticalRejectPrompts += '2. 文字拼写错误、出现明显的乱码和杂乱 AI 字母拼读 >= 2 处，则判定一票否决（"pass": false）。\\n';
     } else {
-      criticalRejectPrompts += '2. 细节和鞋舌文字畸变宽大判定：AI在细小字母（如鞋舌微字、衣服尾巴织标、刺绣标签等非主体超大标题字）常有轻微模糊或者AI无义重合，这属于海报生成行业可接受的正常效果。请高抬贵手，不得判定一票否决直接 Reject 打回。对此仅列为问题，并扣除1-2分即可，要允许该等情况下能 PASS。\n';
+      criticalRejectPrompts += '2. 细节和鞋舌文字畸变宽大判定：AI在细小字母（如鞋舌微字、衣服尾巴织标、刺绣标签等非主体超大标题字）常有轻微模糊或者AI无义重合，这属于海报生成行业可接受的正常效果。请高抬贵手，不得判定一票否决直接 Reject 打回。对此仅列为问题，并扣除1-2分即可，要允许该等情况下能 PASS。\\n';
     }
 
     if (rejectOnPattern) {
-      criticalRejectPrompts += '3. 核心装饰图案/品牌核心印花基本块丢失（标准款极具特性的核心花样完全没生出来），则判定一票否决（"pass": false）。\n';
+      criticalRejectPrompts += '3. 核心装饰图案/品牌核心印花基本块丢失（标准款极具特性的核心花样完全没生出来），则判定一票否决（"pass": false）。\\n';
     } else {
-      criticalRejectPrompts += '3. 装饰花纹偏差不作为一票否决。\n';
+      criticalRejectPrompts += '3. 装饰花纹偏差不作为一票否决。\\n';
     }
     
-    criticalRejectPrompts += '4. 🌟【特赦免责条款】：对于“标记错位问题”，“文字遮挡问题”，以及类似“文字变形问题”和“轻微的swoosh/图案差异”，这是当前AI模型物理上不可能 100% 完美还原的内容，请【必定放宽要求，坚决不能打回】(do NOT reject)，当作正常通过，仅在分数上极其轻微地扣除1-2分即可。\n';
+    criticalRejectPrompts += '4. 🌟【特赦免责条款】：对于“标记错位问题”，“文字遮挡问题”，以及类似“文字变形问题”和“轻微的swoosh/图案差异”，这是当前AI模型物理上不可能 100% 完美还原的内容，请【必定放宽要求，坚决不能打回】(do NOT reject)，当作正常通过，仅在分数上极其轻微地扣除1-2分即可。\\n';
 
     const promptText = `
 你是一位极其严苛的时尚与鞋服配专业一致性检测AI专家。请对以下两张图片进行极严审核，确保“生成海报图”中的产品细节与“标准参考图/图一”高度保持一致：
@@ -718,20 +361,20 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
       const errorText = await response.text();
       let extraHelp = '';
       if (response.status === 401) {
-        extraHelp = ` (秘钥校验失败：请检查您的 MIMO/OpenRouter API Key "${apiKey.substring(0, 6)}...${apiKey.slice(-4)}" 是否正确且处于有效、充值状态。)`;
+        extraHelp = ` (秘钥校验失败：请检查您的 API Key "${apiKey.substring(0, 6)}...${apiKey.slice(-4)}" 是否正确且有效。)`;
       } else if (response.status === 404) {
         const lowerError = errorText.toLowerCase();
         if (lowerError.includes('image input') || lowerError.includes('support image') || lowerError.includes('no endpoint')) {
-          extraHelp = ` (诊断建议：此错误一般由于在 OpenRouter 或中转渠道中使用了不支持图像输入的【文本版模型】。在 OpenRouter 渠道，只有 flagship【xiaomi/mimo-v2.5】支持图像/视觉分析。)`;
+          extraHelp = ` (诊断建议：使用了不支持图像输入的文本模型。请使用含 vision 能力的模型。)`;
         }
       }
-      throw new Error(`一致性审计请求失败 (MIMO API Status ${response.status}): ${errorText}${extraHelp}`);
+      throw new Error(`一致性审计请求失败 (API Status ${response.status}): ${errorText}${extraHelp}`);
     }
 
     const data = await response.json();
     const content = data.choices?.[0]?.message?.content?.trim();
     if (!content) {
-      throw new Error('Received empty response from Mimo model');
+      throw new Error('Received empty response from AI model');
     }
 
     let parsedResult;
@@ -746,19 +389,19 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
       parsedResult = JSON.parse(cleanedJson);
     } catch (parseErr) {
       console.error('Failed to parse JSON content from Mimo model:', content);
-      throw new Error(`Mimo model returned invalid JSON structure: ${content.slice(0, 150)}`);
+      throw new Error(`AI model returned invalid JSON structure: ${content.slice(0, 150)}`);
     }
 
-    // Programmatic adjustment of "pass" on the server side to guarantee strict consistency with settings
+    // Programmatic adjustment
     if (parsedResult && parsedResult.scores) {
       const calculatedScore = (parsedResult.scores.structure || 0) +
                               (parsedResult.scores.color || 0) +
                               (parsedResult.scores.pattern || 0) +
                               (parsedResult.scores.text || 0) +
                               (parsedResult.scores.lighting || 0);
-      
+
       let passDecision = parsedResult.pass;
-      
+
       if (calculatedScore >= passThreshold) {
         let hasCriticalViolation = false;
         if (parsedResult.issues && Array.isArray(parsedResult.issues)) {
@@ -785,123 +428,10 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
       parsedResult.pass = passDecision;
     }
 
-    auditStatusStore.set(taskId, {
-      status: 'success',
-      result: parsedResult,
-      timestamp: Date.now()
-    });
-    console.log(`Audit successfully completed for ${taskId}`);
     return parsedResult;
 
   } catch (err: any) {
-    console.error(`Audit failed for ${taskId}:`, err.message);
-    auditStatusStore.set(taskId, {
-      status: 'error',
-      error: err.message || 'Unknown auditing error',
-      timestamp: Date.now()
-    });
+    console.error(`Client-side audit failed for ${taskId}:`, err.message);
     throw err;
   }
 }
-
-app.post('/api/tasks/save', (req, res) => {
-  try {
-    const { tasks } = req.body;
-    fs.writeFileSync(TASKS_FILE_PATH, JSON.stringify(tasks, null, 2), 'utf-8');
-    res.json({ success: true });
-  } catch (err: any) {
-    console.error('Error saving tasks:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/tasks/load', (req, res) => {
-  try {
-    if (fs.existsSync(TASKS_FILE_PATH)) {
-      const data = fs.readFileSync(TASKS_FILE_PATH, 'utf-8');
-      res.json({ success: true, tasks: JSON.parse(data) });
-    } else {
-      res.json({ success: true, tasks: [] });
-    }
-  } catch (err: any) {
-    console.error('Error loading tasks:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/audit-image', async (req, res) => {
-  try {
-    const { 
-      taskId, 
-      referenceImage, 
-      resultUrl, 
-      category, 
-      auditApiKey, 
-      auditBaseUrl, 
-      auditModel,
-      passThreshold,
-      rejectOnText,
-      rejectOnStructure,
-      rejectOnPattern
-    } = req.body;
-    
-    if (!taskId || !referenceImage || !resultUrl) {
-      return res.status(400).json({ error: 'Missing required parameters: taskId, referenceImage, resultUrl' });
-    }
-
-    const existing = auditStatusStore.get(taskId);
-    if (existing && (existing.status === 'running' || existing.status === 'success')) {
-      return res.json({ status: existing.status, result: existing.result, error: existing.error });
-    }
-
-    const categoryStr = category || 'shoes';
-
-    auditStatusStore.set(taskId, {
-      status: 'running',
-      timestamp: Date.now()
-    });
-
-    try {
-      const result = await runAuditBackground(
-        taskId, 
-        referenceImage, 
-        resultUrl, 
-        categoryStr, 
-        auditApiKey, 
-        auditBaseUrl, 
-        auditModel,
-        {
-          passThreshold,
-          rejectOnText,
-          rejectOnStructure,
-          rejectOnPattern
-        }
-      );
-      res.json({ status: 'success', result });
-    } catch (err: any) {
-      console.error(`Background audit thread error for ${taskId}:`, err);
-      res.status(500).json({ error: err.message || 'Audit failed' });
-    }
-
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/audit-status', (req, res) => {
-  try {
-    const { taskId } = req.query;
-    if (!taskId || typeof taskId !== 'string') {
-      return res.status(400).json({ error: 'taskId parameter is required' });
-    }
-    const status = auditStatusStore.get(taskId);
-    if (!status) {
-      return res.json({ status: 'none' });
-    }
-    res.json(status);
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-export default app;
