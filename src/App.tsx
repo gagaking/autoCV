@@ -799,6 +799,17 @@ export default function App() {
             return next;
           });
           return;
+        } else if (data.status === 'none') {
+          setTasks(prev => {
+            const next = prev.map((t, idx) => idx === index ? { 
+              ...t, 
+              auditStatus: 'error' as const, 
+              auditError: 'Audit task not found on server (may have been lost during redeploy or cold start)'
+            } : t);
+            tasksRef.current = next;
+            return next;
+          });
+          return;
         }
         
         attempts++;
@@ -860,9 +871,53 @@ export default function App() {
       });
       
       if (res.ok) {
-        pollAuditStatus(index, taskId);
+        const data = await res.json();
+        if (data.status === 'success') {
+          const auditResult = data.result;
+          const autoReviewStatus = auditResult.pass ? 'approved' : 'rejected';
+          let updatedTask: GeneratedTask | null = null;
+          setTasks(prev => {
+            const next = prev.map((t, idx) => {
+              if (idx === index) {
+                updatedTask = { 
+                  ...t, 
+                  auditStatus: 'success' as const, 
+                  auditResult,
+                  reviewStatus: autoReviewStatus as any
+                };
+                return updatedTask;
+              }
+              return t;
+            });
+            tasksRef.current = next;
+            return next;
+          });
+          
+          if (updatedTask && (updatedTask as GeneratedTask).resultUrl) {
+            const ut = updatedTask as GeneratedTask;
+            if (auditResult.pass) {
+                 exportTaskToPsdHelper(ut, auditResult.issues || [], true);
+                 const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
+                 const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
+                 const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
+                 const ext = extMatch ? extMatch[1] : 'png';
+                 const downloadFilename = `${baseName}.${ext}`;
+                 autoDownloadImage(ut.resultUrl, downloadFilename);
+            }
+          }
+        } else if (data.status === 'running') {
+          pollAuditStatus(index, taskId);
+        } else if (data.status === 'error') {
+          throw new Error(data.error || 'Audit failed');
+        } else {
+          throw new Error('Unknown response state');
+        }
       } else {
-        const errText = await res.text();
+        let errText = await res.text();
+        try {
+          const errData = JSON.parse(errText);
+          if (errData.error) errText = errData.error;
+        } catch(e) {}
         setTasks(prev => {
           const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'error' as const, auditError: errText || 'Failed to initiate audit' } : t);
           tasksRef.current = next;

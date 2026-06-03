@@ -791,6 +791,7 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
       timestamp: Date.now()
     });
     console.log(`Audit successfully completed for ${taskId}`);
+    return parsedResult;
 
   } catch (err: any) {
     console.error(`Audit failed for ${taskId}:`, err.message);
@@ -799,6 +800,7 @@ bbox 格式：[x1, y1, x2, y2]。其中 x1, y1, x2, y2 均是 0 到 100 之间�
       error: err.message || 'Unknown auditing error',
       timestamp: Date.now()
     });
+    throw err;
   }
 }
 
@@ -859,25 +861,28 @@ app.post('/api/audit-image', async (req, res) => {
       timestamp: Date.now()
     });
 
-    runAuditBackground(
-      taskId, 
-      referenceImage, 
-      resultUrl, 
-      categoryStr, 
-      auditApiKey, 
-      auditBaseUrl, 
-      auditModel,
-      {
-        passThreshold,
-        rejectOnText,
-        rejectOnStructure,
-        rejectOnPattern
-      }
-    ).catch(err => {
+    try {
+      const result = await runAuditBackground(
+        taskId, 
+        referenceImage, 
+        resultUrl, 
+        categoryStr, 
+        auditApiKey, 
+        auditBaseUrl, 
+        auditModel,
+        {
+          passThreshold,
+          rejectOnText,
+          rejectOnStructure,
+          rejectOnPattern
+        }
+      );
+      res.json({ status: 'success', result });
+    } catch (err: any) {
       console.error(`Background audit thread error for ${taskId}:`, err);
-    });
+      res.status(500).json({ error: err.message || 'Audit failed' });
+    }
 
-    res.json({ status: 'running' });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
