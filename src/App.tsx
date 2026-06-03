@@ -659,7 +659,7 @@ export default function App() {
   // Folder Mode State
   const [fixedImageFile, setFixedImageFile] = useState<File | null>(null);
   const [fixedImagePreview, setFixedImagePreview] = useState<string | null>(null);
-  const [fixedPrompt, setFixedPrompt] = useState('参考图一 ，鞋子替换为图二的单只鞋子；图一的背景色相替换为图二鞋子的一个相近色的浅色版本；保持图一的鞋子角度不变。--neg 环境光,多重投影，深色投影；');
+  const [fixedPrompt, setFixedPrompt] = useState('参考图一 ，鞋子替换为图二的单只鞋子；图一的背景色相替换为图二鞋子的一个相近色的浅色版本；保持图一的鞋子角度、投影位置不变。--neg 环境光,多重投影，深色投影；');
   const [folderFiles, setFolderFiles] = useState<File[]>([]);
   
   // Tasks
@@ -855,20 +855,20 @@ export default function App() {
   const triggerAutoAudit = async (index: number, taskId: string, referenceImage: string | undefined, resultUrl: string, customCategory?: 'shoes' | 'apparel' | 'accessories' | 'sets', retryCount: number = 0) => {
     if (!referenceImage || !resultUrl) return;
     
-    const task = tasksRef.current[index];
+    let task = tasksRef.current[index];
     if (retryCount === 0 && (task?.auditStatus === 'running' || task?.auditStatus === 'success')) {
         console.log(`Task ${taskId} is already auditing or succeeded, skip duplicate trigger.`);
         return;
     }
     
+    // Synchronously update to prevent race conditions if multiple triggers happen in the same tick
+    tasksRef.current = tasksRef.current.map((t, idx) => 
+        idx === index ? { ...t, auditStatus: 'running' as const, auditError: undefined } : t
+    );
+    setTasks(tasksRef.current);
+    
     const targetCategory = customCategory || globalCategory;
     const referenceImages = task?.referenceImages && task.referenceImages.length > 0 ? task.referenceImages : [referenceImage];
-
-    setTasks(prev => {
-      const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'running' as const, auditError: undefined } : t);
-      tasksRef.current = next;
-      return next;
-    });
 
     try {
       // Import dynamically or ensure it's imported at the top
@@ -2936,7 +2936,7 @@ export default function App() {
                 let triggeredAny = false;
                 for (let i = 0; i < tasksRef.current.length; i++) {
                     const t = tasksRef.current[i];
-                    if (t.status === 'success' && (!t.auditStatus || t.auditStatus === 'none' || t.auditStatus === 'error') && t.reviewStatus !== 'approved' && t.reviewStatus !== 'rejected') {
+                    if (t.status === 'success' && (!t.auditStatus || t.auditStatus === 'none') && t.reviewStatus !== 'approved' && t.reviewStatus !== 'rejected') {
                         const refImg = t.referenceImage || (t.referenceImages && t.referenceImages[0]);
                         if (refImg && t.resultUrl) {
                             triggerAutoAudit(i, t.id, refImg, t.resultUrl);
