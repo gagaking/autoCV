@@ -849,84 +849,63 @@ export default function App() {
     });
 
     try {
+      // Import dynamically or ensure it's imported at the top
+      const { runAuditOnClient } = await import('@/src/lib/audit');
+
       // Stitch images together with max width 1080 to save tokens and avoid payload limit
       let stitchedReference = await stitchImagesVertically(referenceImages, 1080);
       
-      const res = await fetch('/api/audit-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId,
-          referenceImage: stitchedReference,
-          resultUrl,
-          category: targetCategory,
-          auditApiKey,
-          auditBaseUrl,
-          auditModel,
+      const auditResult = await runAuditOnClient(
+        taskId,
+        stitchedReference,
+        resultUrl,
+        targetCategory,
+        auditApiKey,
+        auditBaseUrl,
+        auditModel,
+        {
           passThreshold: auditPassThreshold,
           rejectOnText,
           rejectOnStructure,
           rejectOnPattern
-        })
+        }
+      );
+
+      const autoReviewStatus = auditResult.pass ? 'approved' : 'rejected';
+      let updatedTask: GeneratedTask | null = null;
+      setTasks(prev => {
+        const next = prev.map((t, idx) => {
+          if (idx === index) {
+            updatedTask = { 
+              ...t, 
+              auditStatus: 'success' as const, 
+              auditResult,
+              reviewStatus: autoReviewStatus as any
+            };
+            return updatedTask;
+          }
+          return t;
+        });
+        tasksRef.current = next;
+        return next;
       });
       
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status === 'success') {
-          const auditResult = data.result;
-          const autoReviewStatus = auditResult.pass ? 'approved' : 'rejected';
-          let updatedTask: GeneratedTask | null = null;
-          setTasks(prev => {
-            const next = prev.map((t, idx) => {
-              if (idx === index) {
-                updatedTask = { 
-                  ...t, 
-                  auditStatus: 'success' as const, 
-                  auditResult,
-                  reviewStatus: autoReviewStatus as any
-                };
-                return updatedTask;
-              }
-              return t;
-            });
-            tasksRef.current = next;
-            return next;
-          });
-          
-          if (updatedTask && (updatedTask as GeneratedTask).resultUrl) {
-            const ut = updatedTask as GeneratedTask;
-            if (auditResult.pass) {
-                 exportTaskToPsdHelper(ut, auditResult.issues || [], true);
-                 const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
-                 const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
-                 const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
-                 const ext = extMatch ? extMatch[1] : 'png';
-                 const downloadFilename = `${baseName}.${ext}`;
-                 autoDownloadImage(ut.resultUrl, downloadFilename);
-            }
-          }
-        } else if (data.status === 'running') {
-          pollAuditStatus(index, taskId);
-        } else if (data.status === 'error') {
-          throw new Error(data.error || 'Audit failed');
-        } else {
-          throw new Error('Unknown response state');
+      if (updatedTask && (updatedTask as GeneratedTask).resultUrl) {
+        const ut = updatedTask as GeneratedTask;
+        if (auditResult.pass) {
+             exportTaskToPsdHelper(ut, auditResult.issues || [], true);
+             const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
+             const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
+             const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
+             const ext = extMatch ? extMatch[1] : 'png';
+             const downloadFilename = `${baseName}.${ext}`;
+             autoDownloadImage(ut.resultUrl, downloadFilename);
         }
-      } else {
-        let errText = await res.text();
-        try {
-          const errData = JSON.parse(errText);
-          if (errData.error) errText = errData.error;
-        } catch(e) {}
-        setTasks(prev => {
-          const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'error' as const, auditError: errText || 'Failed to initiate audit' } : t);
-          tasksRef.current = next;
-          return next;
-        });
       }
     } catch (err: any) {
+      let errText = err.message || 'Failed to initiate audit';
       setTasks(prev => {
-        const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'error' as const, auditError: err.message } : t);
+        const next = prev.map((t, idx) => idx === index ? { ...t, auditStatus: 'error' as const, auditError: errText } : t);
         tasksRef.current = next;
         return next;
       });
