@@ -659,7 +659,7 @@ export default function App() {
   // Folder Mode State
   const [fixedImageFile, setFixedImageFile] = useState<File | null>(null);
   const [fixedImagePreview, setFixedImagePreview] = useState<string | null>(null);
-  const [fixedPrompt, setFixedPrompt] = useState('参考图一 ，鞋子替换为图二的单只鞋子；图一的背景色相替换为图二鞋子的一个相近色的浅色版本；保持图一的鞋子角度、投影位置不变。--neg 环境光,多重投影，深色投影；');
+  const [fixedPrompt, setFixedPrompt] = useState('参考图一 ，鞋子替换为图二的单只鞋子；图一的背景色相替换为图二鞋子的一个相近色的浅色版本；保持图一的鞋子角度、投影位置不变。--neg 产品环境光,多重投影，深色投影；');
   const [folderFiles, setFolderFiles] = useState<File[]>([]);
   
   // Tasks
