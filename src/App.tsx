@@ -659,7 +659,7 @@ export default function App() {
   // Folder Mode State
   const [fixedImageFile, setFixedImageFile] = useState<File | null>(null);
   const [fixedImagePreview, setFixedImagePreview] = useState<string | null>(null);
-  const [fixedPrompt, setFixedPrompt] = useState('参考图一 ，鞋子替换为图二的单只鞋子；图一的背景色相替换为图二鞋子的一个相近色的浅色版本；保持图一的鞋子角度不变。--neg 环境光，硬投影,多重投影，深色投影；');
+  const [fixedPrompt, setFixedPrompt] = useState('参考图一 ，鞋子替换为图二的单只鞋子；图一的背景色相替换为图二鞋子的一个相近色的浅色版本；保持图一的鞋子角度不变。--neg 环境光,多重投影，深色投影；');
   const [folderFiles, setFolderFiles] = useState<File[]>([]);
   
   // Tasks
@@ -855,8 +855,13 @@ export default function App() {
   const triggerAutoAudit = async (index: number, taskId: string, referenceImage: string | undefined, resultUrl: string, customCategory?: 'shoes' | 'apparel' | 'accessories' | 'sets', retryCount: number = 0) => {
     if (!referenceImage || !resultUrl) return;
     
-    const targetCategory = customCategory || globalCategory;
     const task = tasksRef.current[index];
+    if (retryCount === 0 && (task?.auditStatus === 'running' || task?.auditStatus === 'success')) {
+        console.log(`Task ${taskId} is already auditing or succeeded, skip duplicate trigger.`);
+        return;
+    }
+    
+    const targetCategory = customCategory || globalCategory;
     const referenceImages = task?.referenceImages && task.referenceImages.length > 0 ? task.referenceImages : [referenceImage];
 
     setTasks(prev => {
@@ -1362,73 +1367,63 @@ export default function App() {
     rebuildTasks(tableData, folderFiles, file, fixedPrompt);
   };
 
-  const autoDownloadImage = async (url: string, filename: string) => {
-    try {
-      if (url.startsWith('blob:') || url.startsWith('data:')) {
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-      } else {
-          // Retrieve from local client storage cache if available, or fetch as blob client-side
-          const blob = await fetchUrlToBlobAndCache(url);
-          if (blob) {
-              const localBlobUrl = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = localBlobUrl;
-              a.download = filename;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              setTimeout(() => {
-                  URL.revokeObjectURL(localBlobUrl);
-              }, 60000); // Allow ample time for the browser to trigger download before cleanup
-          } else {
-              if (bypassProxy) {
-                  // Direct download failed/blocked by CORS. Bypass Vercel proxy by opening direct URL in a new tab
+  // --- Download Queue to mitigate browser multiple-download blocking ---
+  const downloadQueueRef = useRef<{ url: string, filename: string }[]>([]);
+  const isDownloadingRef = useRef(false);
+
+  const processDownloadQueue = async () => {
+      if (isDownloadingRef.current || downloadQueueRef.current.length === 0) return;
+      isDownloadingRef.current = true;
+      
+      while (downloadQueueRef.current.length > 0) {
+          const item = downloadQueueRef.current.shift();
+          if (!item) continue;
+          
+          try {
+              if (item.url.startsWith('blob:') || item.url.startsWith('data:')) {
                   const a = document.createElement('a');
-                  a.href = url;
-                  a.download = filename;
-                  a.target = '_blank';
-                  a.rel = 'noopener noreferrer';
+                  a.href = item.url;
+                  a.download = item.filename;
                   document.body.appendChild(a);
                   a.click();
                   a.remove();
               } else {
-                  // Fallback to proxy route
-                  const proxyUrl = `/api/download-file?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
-                  const a = document.createElement('a');
-                  a.href = proxyUrl;
-                  a.download = filename;
-                  document.body.appendChild(a);
-                  a.click();
-                  a.remove();
+                  const blob = await fetchUrlToBlobAndCache(item.url);
+                  if (blob) {
+                      const localBlobUrl = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = localBlobUrl;
+                      a.download = item.filename;
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                      setTimeout(() => URL.revokeObjectURL(localBlobUrl), 60000);
+                  } else {
+                      const a = document.createElement('a');
+                      a.href = bypassProxy ? item.url : `/api/download-file?url=${encodeURIComponent(item.url)}&filename=${encodeURIComponent(item.filename)}`;
+                      a.download = item.filename;
+                      if (bypassProxy) a.target = '_blank';
+                      document.body.appendChild(a);
+                      a.click();
+                      a.remove();
+                  }
               }
+          } catch (e) {
+              console.warn("Auto download failed for", item.filename, e);
           }
+          
+          // Wait a short time between downloads to help browser heuristics and let user click 'Allow' if prompted
+          await new Promise(res => setTimeout(res, 1200));
       }
-    } catch (err) {
-      console.error('Failed to auto-download, fallback download:', err);
-      if (bypassProxy) {
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = filename;
-          a.target = '_blank';
-          a.rel = 'noopener noreferrer';
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-      } else {
-          const proxyUrl = `/api/download-file?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
-          const a = document.createElement('a');
-          a.href = proxyUrl;
-          a.download = filename;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
+      
+      isDownloadingRef.current = false;
+  };
+
+  const autoDownloadImage = (url: string, filename: string) => {
+      downloadQueueRef.current.push({ url, filename });
+      if (!isDownloadingRef.current) {
+          processDownloadQueue();
       }
-    }
   };
 
   const handleDownloadAllZip = async () => {
