@@ -48,9 +48,9 @@ export async function runAuditOnClient(
   try {
     console.log(`Starting client-side audit for task ${taskId} (Category: ${category})`);
     
-    // Prepare image payload (pass HTTP URLs directly, convert local blob/data to base64)
-    const base64Ref = referenceImage.startsWith('http') ? referenceImage : await urlToBase64Client(referenceImage);
-    const base64Res = resultUrl.startsWith('http') ? resultUrl : await urlToBase64Client(resultUrl);
+    // Prepare image payload. Always convert to base64 to avoid URL download failures on the AI provider's side.
+    const base64Ref = await urlToBase64Client(referenceImage);
+    const base64Res = await urlToBase64Client(resultUrl);
 
     if (!base64Ref || !base64Res) {
       throw new Error('Reference image or generated image is empty or invalid');
