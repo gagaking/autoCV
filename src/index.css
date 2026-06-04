@@ -130,6 +130,21 @@
 }
 
 /* Custom Minimalist Scrollbar */
+.minimal-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+.minimal-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.minimal-scrollbar::-webkit-scrollbar-thumb {
+  background: #d1d5db; /* Tailwind gray-300 */
+  border-radius: 10px;
+}
+.minimal-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #9ca3af; /* Tailwind gray-400 */
+}
+
 .scrollbar-minimal::-webkit-scrollbar {
   width: 6px;
   height: 6px;

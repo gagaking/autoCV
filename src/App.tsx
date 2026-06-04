@@ -558,8 +558,17 @@ const GridGroupCard: React.FC<{
 };
 
 export default function App() {
-  const [accessKey, setAccessKey] = useState('');
-  const [secretKey, setSecretKey] = useState('');
+  const [accessKey, setAccessKey] = useState(() => localStorage.getItem('access_key') || '');
+  const [secretKey, setSecretKey] = useState(() => localStorage.getItem('secret_key') || '');
+  
+  useEffect(() => {
+    localStorage.setItem('access_key', accessKey);
+  }, [accessKey]);
+
+  useEffect(() => {
+    localStorage.setItem('secret_key', secretKey);
+  }, [secretKey]);
+
   const [auditApiKey, setAuditApiKey] = useState(() => localStorage.getItem('audit_api_key') || '');
   const [auditBaseUrl, setAuditBaseUrl] = useState(() => localStorage.getItem('audit_base_url') || 'https://api.xiaomimimo.com/v1');
   const [auditModel, setAuditModel] = useState(() => localStorage.getItem('audit_model') || 'mimo-v2.5');
@@ -582,7 +591,7 @@ export default function App() {
   const [ratio, setRatio] = useState('3:4');
   const [concurrency, setConcurrency] = useState(3);
   const [fastTrack, setFastTrack] = useState(false);
-  const [useThinkingMode, setUseThinkingMode] = useState(false);
+  const [useThinkingMode, setUseThinkingMode] = useState(true);
   const [useExecutionPrefix, setUseExecutionPrefix] = useState(true);
   const [bypassProxy, setBypassProxy] = useState(() => {
     return localStorage.getItem('bypass_proxy') !== 'false';
@@ -3010,15 +3019,7 @@ export default function App() {
             <span className="text-[10px] text-gray-400 font-normal ml-1 whitespace-nowrap">*滔搏内部使用</span>
         </h1>
         <div className="flex gap-4 items-center shrink-0">
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-gray-500 whitespace-nowrap">Access Key</Label>
-              <Input className="h-9 w-28 text-xs bg-gray-100 rounded-full border-none focus:bg-gray-200" value={accessKey} onChange={e => setAccessKey(e.target.value)} type="password" placeholder="ak_..." />
-            </div>
-            <div className="flex items-center gap-2">
-              <Label className="text-xs text-gray-500 whitespace-nowrap">Secret Key</Label>
-              <Input className="h-9 w-28 text-xs bg-gray-100 rounded-full border-none focus:bg-gray-200" value={secretKey} onChange={e => setSecretKey(e.target.value)} type="password" placeholder="sk_..." />
-            </div>
-            <div className="flex items-center gap-2 border-l pl-4 border-gray-200">
+            <div className="flex items-center gap-2 pl-0 border-transparent">
               <Button
                 variant="outline"
                 size="sm"
@@ -3549,12 +3550,41 @@ export default function App() {
 
       {isAuditSettingsOpen && (
         <div className="fixed inset-0 z-[160] bg-black/60 flex items-center justify-center p-4" onClick={() => setIsAuditSettingsOpen(false)}>
-            <div className="bg-white rounded-[3rem] p-7 max-w-md w-full shadow-2xl flex flex-col gap-5 animate-in fade-in zoom-in duration-200 max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-                <div className="flex justify-between items-center shrink-0">
+            <div className="bg-white rounded-[3rem] p-7 max-w-md w-full shadow-2xl flex flex-col gap-5 animate-in fade-in zoom-in duration-200 max-h-[90vh]" onClick={e => e.stopPropagation()}>
+                <div className="flex justify-between items-center shrink-0 mb-2">
                     <h3 className="text-base font-black text-gray-900 flex items-center gap-2">
                         <Settings className="w-5 h-5 text-gray-700"/> 系统及配置信息集成设置
                     </h3>
                     <button onClick={() => setIsAuditSettingsOpen(false)} className="text-gray-400 hover:text-gray-600 bg-gray-100 hover:bg-gray-200 p-2 rounded-full transition-colors cursor-pointer"><X className="w-4 h-4"/></button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto pr-2 minimal-scrollbar flex flex-col gap-5 pb-2">
+                
+                {/* 0. Access Keys */}
+                <div className="flex flex-col gap-3 shrink-0 bg-gray-50 border border-gray-100 p-4 rounded-[1.5rem]">
+                    <Label className="text-xs font-bold text-gray-500 flex items-center gap-1">🔑 鉴权配置 (Lovart API)</Label>
+                    <div className="flex flex-col gap-3 text-xs">
+                        <div className="flex flex-col gap-1.5">
+                            <Label className="text-xs font-bold text-gray-700">Access Key</Label>
+                            <Input 
+                                value={accessKey} 
+                                onChange={(e) => setAccessKey(e.target.value)} 
+                                type="password" 
+                                placeholder="ak_..." 
+                                className="h-10 text-xs bg-white rounded-full border border-gray-200 focus:bg-gray-100 px-4"
+                            />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <Label className="text-xs font-bold text-gray-700">Secret Key</Label>
+                            <Input 
+                                value={secretKey} 
+                                onChange={(e) => setSecretKey(e.target.value)} 
+                                type="password" 
+                                placeholder="sk_..." 
+                                className="h-10 text-xs bg-white rounded-full border border-gray-200 focus:bg-gray-100 px-4"
+                            />
+                        </div>
+                    </div>
                 </div>
 
                 {/* 1. 常规系统配置 (General System Settings) */}
@@ -3685,8 +3715,9 @@ export default function App() {
                         </div>
                     </div>
                 </div>
+                </div> {/* End scrollable area */}
 
-                <div className="flex gap-3 mt-1 shrink-0">
+                <div className="flex gap-3 mt-1 shrink-0 border-t border-gray-100 pt-3">
                     <Button className="flex-1 rounded-full h-11 font-black bg-[#ccff00] text-black hover:bg-[#b8e600] text-xs cursor-pointer shadow-none" onClick={() => setIsAuditSettingsOpen(false)}>
                         确认并保存设置
                     </Button>
