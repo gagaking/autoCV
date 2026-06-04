@@ -2007,7 +2007,7 @@ export default function App() {
 
                                 {/* Interactive defect overlays mapped dynamically from AI model coordinates! */}
                                 {task.auditResult?.issues?.map((issue, idx) => {
-                                  const [rawX1, rawY1, rawX2, rawY2] = issue.bbox;
+                                  const [rawY1, rawX1, rawY2, rawX2] = issue.bbox;
                                   
                                   // Auto normalize coordinate values that are on 0-1000 scale down to 0-100%
                                   const maxVal = Math.max(rawX1, rawY1, rawX2, rawY2);

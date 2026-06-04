@@ -44,7 +44,7 @@ export async function exportToPsd(
     ctxBox.fillRect(width - 1, height - 1, 1, 1);
 
     issues.forEach(issue => {
-      const [pctX1, pctY1, pctX2, pctY2] = issue.bbox;
+      const [pctY1, pctX1, pctY2, pctX2] = issue.bbox;
       const maxVal = Math.max(pctX1, pctY1, pctX2, pctY2);
       const scaleFactor = maxVal > 100 ? 10 : 1;
       const x1 = pctX1 / scaleFactor;
