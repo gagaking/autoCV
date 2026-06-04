@@ -2480,7 +2480,7 @@ export default function Workbench() {
                   }
 
                   if (useExecutionPrefix) {
-                      agentPrompt = `你是一个严格的执行工具，请直接执行以下指令，不要进行任何思考、解释，也严禁修改下面的任务细节：\n` + agentPrompt;
+                      agentPrompt = `【强制原样指令】你必须严格原样使用下面括号内的提示词调用工具生图，不准添加任何发散细节、扩写或拆解，即便你觉得提示词不完善也必须原样透传。如果工具报错也请直接将错误抛出，不要自动修正！\n原样使用的提示词内容如下：\n【 ${agentPrompt} 】`;
                   }
               }
 
@@ -2494,11 +2494,11 @@ export default function Workbench() {
                     await new Promise(r => setTimeout(r, 1000));
 
                     const mappedToolName = (() => {
+                      if (modelType === 'GPT Image 2') return 'generate_image_gpt_image_2';
                       if (modelType === 'Nano Banana Pro') return 'generate_image_nano_banana_pro';
                       if (modelType === 'Nano Banana 2') return 'generate_image_nano_banana_2';
                       if (modelType === 'seedream 4.5') return 'generate_image_seedream_v4_5';
-                      if (modelType === 'GPT Image 2') return 'generate_image_gpt_image_2';
-                      return undefined;
+                      return undefined; // Let Agent Decide
                     })();
 
                     const chatRes = await submitLovartChat({ 
@@ -2506,7 +2506,7 @@ export default function Workbench() {
                         prompt: agentPrompt, 
                         attachments: attachments.length ? attachments : undefined,
                         mode: useThinkingMode ? 'thinking' : 'fast',
-                        tool_config: mappedToolName ? { prefer_tool_categories: { IMAGE: [mappedToolName] } } : undefined
+                        tool_config: mappedToolName ? { include_tools: [mappedToolName] } : undefined
                     }, accessKey, secretKey);
                     
                     if (chatRes.status === 429) {
@@ -2888,11 +2888,11 @@ export default function Workbench() {
                 <SelectTrigger className="h-9 text-xs bg-gray-100 rounded-full border-none px-3 focus:ring-0 focus:ring-offset-0 hover:bg-gray-200 data-[state=open]:bg-gray-200 cursor-pointer w-[160px]">
                   <SelectValue placeholder="选择模型" />
                 </SelectTrigger>
-                <SelectContent className="rounded-2xl border-none shadow-lg">
+                <SelectContent className="rounded-2xl border-none shadow-lg max-h-[300px]">
+                  <SelectItem value="GPT Image 2" className="text-xs rounded-xl cursor-pointer">GPT Image 2</SelectItem>
                   <SelectItem value="Nano Banana Pro" className="text-xs rounded-xl cursor-pointer">Nano Banana Pro</SelectItem>
                   <SelectItem value="Nano Banana 2" className="text-xs rounded-xl cursor-pointer">Nano Banana 2</SelectItem>
-                  <SelectItem value="seedream 4.5" className="text-xs rounded-xl cursor-pointer">seedream 4.5</SelectItem>
-                  <SelectItem value="GPT Image 2" className="text-xs rounded-xl cursor-pointer">GPT Image 2</SelectItem>
+                  <SelectItem value="seedream 4.5" className="text-xs rounded-xl cursor-pointer">Seedream 4.5</SelectItem>
                 </SelectContent>
               </Select>
             </div>
