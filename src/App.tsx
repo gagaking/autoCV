@@ -722,6 +722,8 @@ export default function App() {
   }, [currentReviewIndex]);
   const [tagPanelType, setTagPanelType] = useState<'approved' | 'rejected' | 'none' | null>(null);
 
+  const startExecutionRef = useRef<() => void>();
+
   // Persistence helpers
   const saveTasksToServer = (newTasks: GeneratedTask[]) => {
     fetch('/api/tasks/save', {
@@ -1939,22 +1941,9 @@ export default function App() {
                           
                           {task.status === 'success' && (
                             <div className="flex items-center gap-2 ml-2">
-                              <span className="text-xs font-normal text-gray-600">选择审查品类模板 :</span>
-                              <Select value={taskCategory} onValueChange={(v: any) => setTaskCategory(v)}>
-                                <SelectTrigger className="h-8 text-xs bg-black border-none text-[#ccff00] font-bold rounded-lg px-2 w-[80px] hover:bg-black/90 focus:ring-0 focus:ring-offset-0">
-                                  {taskCategory === 'shoes' ? '鞋款' : taskCategory === 'apparel' ? '服装' : taskCategory === 'accessories' ? '配饰' : taskCategory === 'sets' ? '套装' : <SelectValue placeholder="审查品类" />}
-                                </SelectTrigger>
-                                  <SelectContent className="min-w-0 w-[80px] rounded-xl border border-gray-800 shadow-lg bg-black text-white">
-                                    <SelectItem value="shoes" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">鞋款</SelectItem>
-                                    <SelectItem value="apparel" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">服装</SelectItem>
-                                    <SelectItem value="accessories" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">配饰</SelectItem>
-                                    <SelectItem value="sets" className="text-xs font-semibold rounded-lg cursor-pointer focus:bg-[#ccff00] focus:text-black">套装</SelectItem>
-                                  </SelectContent>
-                              </Select>
-
                               <Button
                                 disabled={task.auditStatus === 'running'}
-                                onClick={() => triggerAutoAudit(currentReviewIndex, task.id, refImg, task.resultUrl!, taskCategory)}
+                                onClick={() => triggerAutoAudit(currentReviewIndex, task.id, refImg, task.resultUrl!, undefined)}
                                 className="h-8 bg-[#ccff00] hover:bg-[#b8e600] border-none text-black font-bold text-xs rounded-lg shadow-[0_0_10px_rgba(204,255,0,0.4)] transition-all cursor-pointer px-4 flex items-center gap-1.5 animate-fadeIn duration-200 scale-100 active:scale-95 ml-1"
                               >
                                 {task.auditStatus === 'running' ? (
@@ -2122,7 +2111,7 @@ export default function App() {
                             </div>
                             <Button 
                               size="sm" 
-                              onClick={() => triggerAutoAudit(currentReviewIndex, task.id, refImg, task.resultUrl!, taskCategory)}
+                              onClick={() => triggerAutoAudit(currentReviewIndex, task.id, refImg, task.resultUrl!, undefined)}
                               className="mt-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-lg px-4"
                             >
                               重新对齐比对
@@ -2988,7 +2977,7 @@ export default function App() {
                     setTasks(tasksRef.current);
                     setIsProcessing(false);
                     // Automatic restart
-                    setTimeout(() => startExecution(), 1000);
+                    setTimeout(() => startExecutionRef.current?.(), 1000);
                     return; 
                 }
             }
@@ -3003,6 +2992,8 @@ export default function App() {
         setTasks(tasksRef.current);
     }
   };
+
+  startExecutionRef.current = startExecution;
 
   return (
     <div className="h-screen w-screen bg-[#eef0f2] flex flex-col font-sans overflow-hidden p-3 gap-3">
@@ -3597,24 +3588,7 @@ export default function App() {
                     </div>
                 </div>
 
-                {/* 2. 审计默认品类模板 */}
-                <div className="flex flex-col gap-2.5 shrink-0 bg-[#fff5f5] border border-rose-100 p-4 rounded-[1.5rem]">
-                    <Label className="text-xs font-bold text-rose-600 flex items-center gap-1">🏷️ 全局自动审计品类模板</Label>
-                    <Select value={globalCategory} onValueChange={(v: any) => setGlobalCategory(v)}>
-                      <SelectTrigger className="h-10 text-xs bg-black border-none text-[#ccff00] font-bold rounded-full px-4 focus:ring-0 focus:ring-offset-0 hover:bg-black/90 cursor-pointer w-full shadow-sm">
-                        {globalCategory === 'shoes' ? '鞋款模板' : globalCategory === 'apparel' ? '服装模板' : globalCategory === 'accessories' ? '配饰模板' : globalCategory === 'sets' ? '套装模板' : <SelectValue placeholder="选择审查默认品类" />}
-                      </SelectTrigger>
-                      <SelectContent className="rounded-2xl border border-gray-800 shadow-lg bg-black text-white">
-                        <SelectItem value="shoes" className="text-xs font-semibold rounded-xl cursor-pointer focus:bg-[#ccff00] focus:text-black">鞋款模板</SelectItem>
-                        <SelectItem value="apparel" className="text-xs font-semibold rounded-xl cursor-pointer focus:bg-[#ccff00] focus:text-black">服装模板</SelectItem>
-                        <SelectItem value="accessories" className="text-xs font-semibold rounded-xl cursor-pointer focus:bg-[#ccff00] focus:text-black">配饰模板</SelectItem>
-                        <SelectItem value="sets" className="text-xs font-semibold rounded-xl cursor-pointer focus:bg-[#ccff00] focus:text-black">套装模板</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <span className="text-[10px] text-rose-500/80 leading-tight">
-                        * 设置未审计子任务的默认对齐算法与打分模板，各个任务可以在详情板中另行微调。
-                    </span>
-                </div>
+
 
                 {/* 3. 一致性审计 (MIMO) 全局配置 */}
                 <div className="flex flex-col gap-3 shrink-0 bg-gray-50 border border-gray-100 p-4 rounded-[1.5rem]">
