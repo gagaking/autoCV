@@ -419,7 +419,7 @@ async function runAuditBackground(
       apiKey = apiKey.slice(1, -1).trim();
     }
     if (!apiKey) {
-      apiKey = 'sk-ci037ealwgdgw6cadb3cc4hxzvm2fgfbw2clwc1gvuma1k3k';
+      // User must provide key
     }
 
     let model = (userModel || process.env.OPENROUTER_MODEL || '').trim();
@@ -469,6 +469,10 @@ async function runAuditBackground(
 
     const isMimoOfficial = openRouterUrl.includes('xiaomimimo.com') || (model === 'mimo-v2.5' && !openRouterUrl.includes('openrouter.ai'));
 
+    if (!apiKey) {
+      throw new Error("MIMO API Key is not configured. Please enter your valid API key in Settings.");
+    }
+
     if (isMimoOfficial) {
       if (openRouterUrl.includes('openrouter.ai')) {
         console.log(`[AutoDetect] Re-routing to official Xiaomi MIMO endpoint for model ${model}`);
@@ -480,10 +484,6 @@ async function runAuditBackground(
       if (model === 'xiaomi/mimo-v2.5' || model === 'xiaomi/mimo-v2.5-pro' || model === 'vendor/xiaomi/mimo-preview') {
         model = 'vendor/xiaomi/mimo-preview';
       }
-    }
-
-    if (!apiKey) {
-      throw new Error("MIMO API Key is not configured. Please enter your valid API key in Settings.");
     }
 
     const passThreshold = options?.passThreshold ?? 85;

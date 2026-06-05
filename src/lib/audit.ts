@@ -64,7 +64,7 @@ export async function runAuditOnClient(
       apiKey = apiKey.slice(1, -1).trim();
     }
     if (!apiKey) {
-      apiKey = 'sk-ci037ealwgdgw6cadb3cc4hxzvm2fgfbw2clwc1gvuma1k3k';
+      // User must provide key
     }
 
     let model = (userModel || '').trim();
@@ -114,6 +114,10 @@ export async function runAuditOnClient(
 
     const isMimoOfficial = openRouterUrl.includes('xiaomimimo.com') || (model === 'mimo-v2.5' && !openRouterUrl.includes('openrouter.ai'));
 
+    if (!apiKey) {
+      throw new Error("MIMO API Key is not configured. Please enter your valid API key in Settings.");
+    }
+
     if (isMimoOfficial) {
       if (openRouterUrl.includes('openrouter.ai')) {
         openRouterUrl = 'https://api.xiaomimimo.com/v1/chat/completions';
@@ -123,10 +127,6 @@ export async function runAuditOnClient(
       if (model === 'xiaomi/mimo-v2.5' || model === 'xiaomi/mimo-v2.5-pro' || model === 'vendor/xiaomi/mimo-preview') {
         model = 'vendor/xiaomi/mimo-preview';
       }
-    }
-
-    if (!apiKey) {
-      throw new Error("MIMO API Key is not configured. Please enter your valid API key in Settings.");
     }
 
     const passThreshold = options?.passThreshold ?? 85;
