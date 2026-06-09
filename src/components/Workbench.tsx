@@ -813,14 +813,20 @@ export default function Workbench() {
             return next;
           });
           
-          if (auditResult.pass && ut.resultUrl) {
-               exportTaskToPsdHelper(ut, auditResult.issues || [], true);
-               const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
-               const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
-               const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
-               const ext = extMatch ? extMatch[1] : 'png';
-               const downloadFilename = `${baseName}.${ext}`;
-               autoDownloadImage(ut.resultUrl, downloadFilename);
+          if (ut.resultUrl) {
+              const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
+              const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
+              const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
+              const ext = extMatch ? extMatch[1] : 'png';
+              
+              if (auditResult.pass) {
+                  exportTaskToPsdHelper(ut, auditResult.issues || [], true);
+                  const downloadFilename = `${baseName}.${ext}`;
+                  autoDownloadImage(ut.resultUrl, downloadFilename);
+              } else {
+                  const downloadFilename = `${baseName}_不合格.${ext}`;
+                  autoDownloadImage(ut.resultUrl, downloadFilename);
+              }
           }
           return;
         } else if (data.status === 'error') {
@@ -951,14 +957,20 @@ export default function Workbench() {
         return next;
       });
       
-      if (auditResult.pass && ut.resultUrl) {
-           exportTaskToPsdHelper(ut, auditResult.issues || [], true);
+      if (ut.resultUrl) {
            const filenameStr = ut.originalFilename ? String(ut.originalFilename) : '';
            const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${ut.id}`;
            const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
            const ext = extMatch ? extMatch[1] : 'png';
-           const downloadFilename = `${baseName}.${ext}`;
-           autoDownloadImage(ut.resultUrl, downloadFilename);
+           
+           if (auditResult.pass) {
+               exportTaskToPsdHelper(ut, auditResult.issues || [], true);
+               const downloadFilename = `${baseName}.${ext}`;
+               autoDownloadImage(ut.resultUrl, downloadFilename);
+           } else {
+               const downloadFilename = `${baseName}_不合格.${ext}`;
+               autoDownloadImage(ut.resultUrl, downloadFilename);
+           }
       }
     } catch (err: any) {
       if (retryCount < 3) {
