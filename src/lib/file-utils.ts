@@ -60,7 +60,10 @@ export const stitchImagesVertically = (imageUrls: string[], maxWidth: number = 1
              currentY += h;
           });
           
-          resolve(canvas.toDataURL('image/jpeg', 0.9));
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+          canvas.width = 0;
+          canvas.height = 0;
+          resolve(dataUrl);
         }
       };
       img.onerror = () => {
@@ -101,7 +104,10 @@ export const createThumbnailBase64 = (file: File, maxWidth: number = 300): Promi
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+        canvas.width = 0;
+        canvas.height = 0;
+        resolve(dataUrl);
       } else {
         // Fallback
         const reader = new FileReader();

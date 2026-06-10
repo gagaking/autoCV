@@ -17,6 +17,7 @@ export async function exportToPsd(
   referenceImages: string[] = [],
   filename: string = 'audit_result.psd'
 ) {
+  const canvasesToCleanup: HTMLCanvasElement[] = [];
   try {
     const genImg = await loadImage(imageUrl);
     const width = genImg.width;
@@ -26,6 +27,7 @@ export async function exportToPsd(
     const imgCanvas = document.createElement('canvas');
     imgCanvas.width = width;
     imgCanvas.height = height;
+    canvasesToCleanup.push(imgCanvas);
     const ctxImg = imgCanvas.getContext('2d');
     if (!ctxImg) throw new Error('No canvas context');
     ctxImg.drawImage(genImg, 0, 0);
@@ -34,6 +36,7 @@ export async function exportToPsd(
     const boxCanvas = document.createElement('canvas');
     boxCanvas.width = width;
     boxCanvas.height = height;
+    canvasesToCleanup.push(boxCanvas);
     const ctxBox = boxCanvas.getContext('2d');
     if (!ctxBox) throw new Error('No canvas context');
     ctxBox.clearRect(0, 0, width, height);
@@ -177,6 +180,7 @@ export async function exportToPsd(
           const c = document.createElement('canvas');
           c.width = refImg.width;
           c.height = refImg.height;
+          canvasesToCleanup.push(c);
           const ctx = c.getContext('2d');
           if (ctx) {
             ctx.drawImage(refImg, 0, 0);
@@ -202,6 +206,7 @@ export async function exportToPsd(
     const compositeCanvas = document.createElement('canvas');
     compositeCanvas.width = width;
     compositeCanvas.height = height;
+    canvasesToCleanup.push(compositeCanvas);
     const ctxComp = compositeCanvas.getContext('2d');
     if (ctxComp) {
       ctxComp.fillStyle = '#ffffff';
@@ -239,6 +244,11 @@ export async function exportToPsd(
   } catch (err) {
     console.error('Export PSD Failed:', err);
     throw err;
+  } finally {
+    canvasesToCleanup.forEach(canvas => {
+      canvas.width = 0;
+      canvas.height = 0;
+    });
   }
 }
 

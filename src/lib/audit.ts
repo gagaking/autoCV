@@ -5,16 +5,44 @@ export async function urlToBase64Client(url: string | undefined): Promise<string
   }
   
   try {
-    let fetchUrl = url;
-    // If it's not a local data or proxy url, use the proxy to bypass CORS
-    if (!url.startsWith('data:') && !url.startsWith('/api/proxy-image')) {
-       fetchUrl = `/api/proxy-image?url=${encodeURIComponent(url)}`;
+    let buffer: ArrayBuffer | null = null;
+    let contentType = 'image/png';
+    let directFetched = false;
+
+    // 1. If it's a blob URL or standard HTTP/HTTPS URL, try to fetch it directly from the client browser first.
+    // This allows mainland China users to fetch images (local or direct CORS-friendly CDNs) without being blocked by the Cloud Run proxy domain (which is on *.run.app).
+    if (url.startsWith('blob:') || url.startsWith('http:') || url.startsWith('https:')) {
+      try {
+        const directRes = await fetch(url);
+        if (directRes.ok) {
+          contentType = directRes.headers.get('content-type') || 'image/png';
+          buffer = await directRes.arrayBuffer();
+          directFetched = true;
+        }
+      } catch (directErr: any) {
+        console.warn(`Direct client fetch failed for ${url} (CORS or network), falling back to server proxy:`, directErr.message);
+      }
     }
-    
-    const res = await fetch(fetchUrl);
-    if (!res.ok) throw new Error(`Status ${res.status}`);
-    const contentType = res.headers.get('content-type') || 'image/png';
-    const buffer = await res.arrayBuffer();
+
+    // 2. Fallback to server proxy on *.run.app if direct fetch was not successful and it is not a blob: URL
+    if (!directFetched) {
+      if (url.startsWith('blob:')) {
+        throw new Error(`Cannot proxy local blob URL: ${url}`);
+      }
+      let fetchUrl = url;
+      if (!url.startsWith('/api/proxy-image')) {
+         fetchUrl = `/api/proxy-image?url=${encodeURIComponent(url)}`;
+      }
+      
+      const res = await fetch(fetchUrl);
+      if (!res.ok) throw new Error(`Status ${res.status}`);
+      contentType = res.headers.get('content-type') || 'image/png';
+      buffer = await res.arrayBuffer();
+    }
+
+    if (!buffer) {
+      throw new Error('Failed to acquire image buffer');
+    }
     
     // Uint8Array to base64 in browser
     let binary = '';
@@ -48,9 +76,9 @@ export async function runAuditOnClient(
   try {
     console.log(`Starting client-side audit for task ${taskId} (Category: ${category})`);
     
-    // Prepare image payload (pass HTTP URLs directly, convert local blob/data to base64)
-    const base64Ref = referenceImage.startsWith('http') ? referenceImage : await urlToBase64Client(referenceImage);
-    const base64Res = resultUrl.startsWith('http') ? resultUrl : await urlToBase64Client(resultUrl);
+    // Prepare image payload (always convert to base64 to ensure the China-based API server can read it without hitting GFW blocks on Cloud Run domain)
+    const base64Ref = referenceImage.startsWith('data:') ? referenceImage : await urlToBase64Client(referenceImage);
+    const base64Res = resultUrl.startsWith('data:') ? resultUrl : await urlToBase64Client(resultUrl);
 
     if (!base64Ref || !base64Res) {
       throw new Error('Reference image or generated image is empty or invalid');
