@@ -2695,7 +2695,6 @@ export default function Workbench() {
                   const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${currentTask.id}`;
                   const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
                   const ext = extMatch ? extMatch[1] : 'png';
-                  exportTaskToPsdHelper(currentTask, [], true);
                   const downloadFilename = `${baseName}.${ext}`;
                   autoDownloadImage(resultUrl, downloadFilename);
               }
