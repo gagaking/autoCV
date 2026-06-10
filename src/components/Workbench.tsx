@@ -5,6 +5,7 @@ import { Input } from '@/src/components/ui/input';
 import { Label } from '@/src/components/ui/label';
 import { Button } from '@/src/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/src/components/ui/select';
+import { Switch } from '@/src/components/ui/switch';
 import { fileToBase64, createThumbnailBase64, stitchImagesVertically } from '@/src/lib/file-utils';
 import { FolderUp, FileUp, Settings, Play, Pause, Image as ImageIcon, Loader2, ArrowLeft, Download, Check, X, ChevronLeft, ChevronRight, RefreshCw, Settings2, CheckSquare, Square, Link2, Maximize2, ShieldAlert, Sparkles, CheckCircle2, XCircle, SlidersHorizontal, FileText, AlertTriangle } from 'lucide-react';
 
@@ -614,6 +615,9 @@ export default function Workbench() {
   const [globalCategory, setGlobalCategory] = useState<'shoes' | 'apparel' | 'accessories' | 'sets'>('shoes');
   const [activeIssueIndex, setActiveIssueIndex] = useState<number | null>(null);
   const [isBatchAuditing, setIsBatchAuditing] = useState(false);
+  const [autoAuditEnabled, setAutoAuditEnabled] = useState(false);
+  const autoAuditEnabledRef = useRef(autoAuditEnabled);
+  autoAuditEnabledRef.current = autoAuditEnabled;
 
   const handleBatchAudit = async () => {
     setIsBatchAuditing(true);
@@ -2681,11 +2685,20 @@ export default function Workbench() {
               
               // Chain the automatic consistency audit
               const refImg = task.referenceImage || (task.referenceImages && task.referenceImages[0]);
-              if (refImg && resultUrl) {
-                triggerAutoAudit(i, task.id, refImg, resultUrl);
+              if (autoAuditEnabledRef.current) {
+                  if (refImg && resultUrl) {
+                    triggerAutoAudit(i, task.id, refImg, resultUrl);
+                  }
+              } else {
+                  const currentTask = tasksRef.current[i];
+                  const filenameStr = currentTask.originalFilename ? String(currentTask.originalFilename) : '';
+                  const baseName = filenameStr ? filenameStr.replace(/\.[^/.]+$/, "") : `result_${currentTask.id}`;
+                  const extMatch = filenameStr ? filenameStr.match(/\.([^/.]+)$/) : null;
+                  const ext = extMatch ? extMatch[1] : 'png';
+                  exportTaskToPsdHelper(currentTask, [], true);
+                  const downloadFilename = `${baseName}.${ext}`;
+                  autoDownloadImage(resultUrl, downloadFilename);
               }
-              
-              // Removed immediate auto-download; image and PSD are now downloaded in pollAuditStatus only if AI audit passes.
               
               success = true;
             } catch (err: any) {
@@ -2783,7 +2796,7 @@ export default function Workbench() {
                     const t = tasksRef.current[i];
                     if (t.status === 'success' && (!t.auditStatus || t.auditStatus === 'none') && t.reviewStatus !== 'approved' && t.reviewStatus !== 'rejected') {
                         const refImg = t.referenceImage || (t.referenceImages && t.referenceImages[0]);
-                        if (refImg && t.resultUrl) {
+                        if (autoAuditEnabledRef.current && refImg && t.resultUrl) {
                             triggerAutoAudit(i, t.id, refImg, t.resultUrl);
                             triggeredAny = true;
                         }
@@ -3008,6 +3021,10 @@ export default function Workbench() {
              <div className="pb-4 flex flex-col sm:flex-row gap-4 sm:items-center justify-between shrink-0 border-none">
                  <div className="text-lg font-bold text-gray-800 flex items-center">
                     任务列表 
+                    <div className="flex items-center gap-2 ml-4">
+                        <Switch id="auto-audit" checked={autoAuditEnabled} onCheckedChange={setAutoAuditEnabled} />
+                        <Label htmlFor="auto-audit" className="text-sm font-normal text-gray-600 cursor-pointer">自动审核</Label>
+                    </div>
                     {tasks.length > 0 && (
                         <div className="flex items-center gap-6 ml-6 text-[13px] whitespace-nowrap font-normal">
                             <div className="flex items-center gap-3 w-44">
