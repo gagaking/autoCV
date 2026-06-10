@@ -47,7 +47,7 @@ export async function exportToPsd(
     ctxBox.fillRect(width - 1, height - 1, 1, 1);
 
     issues.forEach(issue => {
-      const [pctY1, pctX1, pctY2, pctX2] = issue.bbox;
+      const [pctX1, pctY1, pctX2, pctY2] = issue.bbox;
       const maxVal = Math.max(pctX1, pctY1, pctX2, pctY2);
       const scaleFactor = maxVal > 100 ? 10 : 1;
       const x1 = pctX1 / scaleFactor;
@@ -192,7 +192,14 @@ export async function exportToPsd(
           }
           const leftOffset = Math.round((width - refImg.width) / 2);
           const topOffset = Math.round((height - refImg.height) / 2);
-          return { name: `参考图 ${index + 1}`, canvas: c, left: leftOffset, top: topOffset };
+          return {
+            name: `参考图 ${index + 1}`,
+            canvas: c,
+            left: leftOffset,
+            top: topOffset,
+            right: leftOffset + refImg.width,
+            bottom: topOffset + refImg.height
+          };
         } catch (e) {
           console.warn('Failed to load ref image for PSD:', refUrl);
           return null;
@@ -200,7 +207,7 @@ export async function exportToPsd(
       })
     );
 
-    const validRefs = refCanvases.filter(Boolean) as {name: string, canvas: HTMLCanvasElement, left: number, top: number}[];
+    const validRefs = refCanvases.filter(Boolean) as {name: string, canvas: HTMLCanvasElement, left: number, top: number, right: number, bottom: number}[];
 
     // 4. Composite Previews for PSD Document Thumbnail/Flattened representation
     const compositeCanvas = document.createElement('canvas');
@@ -221,13 +228,17 @@ export async function exportToPsd(
         name: '生成图片',
         canvas: imgCanvas,
         left: 0,
-        top: 0
+        top: 0,
+        right: width,
+        bottom: height
       },
       {
         name: '标注图层',
         canvas: boxCanvas,
         left: 0,
-        top: 0
+        top: 0,
+        right: width,
+        bottom: height
       }
     ];
 
